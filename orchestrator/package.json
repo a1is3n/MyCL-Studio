@@ -1,0 +1,25 @@
+{
+  "name": "mycl-v14-orchestrator",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "start": "node dist/index.js",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "e2e": "npm run build && node harness.mjs"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.102.0",
+    "csp_evaluator": "^1.1.8",
+    "playwright": "^1.60.0",
+    "typescript": "~5.8.3"
+  },
+  "devDependencies": {
+    "@types/node": "^22.19.19",
+    "vitest": "^4.1.6"
+  }
+}

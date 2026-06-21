@@ -1,0 +1,296 @@
+// cli-run — genel, tek-atışlık `claude` CLI çalıştırıcı (abonelik auth).
+//
+// v15.8 (2026-05-31): translator + orchestrator rolleri "cli" backend'inde bunu
+// kullanır. codegen'in CliCodegenBackend'i kendi UI-stream'li loop'unu kullanır;
+// bu helper UI-panel/observer KÖPRÜSÜ OLMADAN sadece sonucu (metin + tool_use'lar
+// + turn/hata) toplar. API key ENJEKTE EDİLMEZ → kurulu abonelik (oauthAccount).
+
+import { spawn } from "node:child_process";
+import { createInterface } from "node:readline";
+import { guardSandboxOrWarn, sandboxSettingsArgs } from "./agent-sandbox.js";
+import { waitIfPaused } from "./pause.js";
+import {
+  noteRateLimitEvent,
+  noteCliRateLimitError,
+  finalizeCliRateLimit,
+  detectCliRateLimit,
+  type RateLimitInfo,
+} from "./cli-rate-limit.js";
+import { claudeSpawnEnv, resolveClaudePath } from "./codegen/cli-backend.js";
+import { shouldFolderGuard, wrapReadOnlyClaude } from "./claude-folder-guard.js";
+import type { TokenUsage } from "./cli-session.js";
+import { recordTokenUsage } from "./ipc.js";
+import { log } from "./logger.js";
+import { withDangerousBashDeny } from "./tool-policy.js";
+
+export interface CliRunOpts {
+  systemPrompt: string;
+  userMessage: string;
+  modelId: string;
+  /** claude'un çalışacağı dizin (read-only roller için zararsız). */
+  cwd: string;
+  /** İzinli built-in tool'lar (örn. ["Read","Grep","Bash","Glob"]). Boş/undefined → araç bayrağı yok. */
+  allowedTools?: string[];
+  /** Reddedilen tool kalıpları (örn. ["Write","Edit","Bash(rm *)"]). */
+  disallowedTools?: string[];
+  /** "ultracode" → --settings; diğerleri → --effort. */
+  effort?: string;
+  maxBudgetUsd?: number;
+  /** IDLE-timeout: bu süre HİÇ çıktı gelmezse öldür (her olayda sıfırlanır). */
+  timeoutMs?: number;
+  /** WALL-CLOCK cap: tek çağrı toplam-süre tavanı (olaylarla SIFIRLANMAZ); runaway keser.
+   *  Verilmezse WALL_CLOCK_MAX_MS. <=0 → kapalı. */
+  wallClockMs?: number;
+  /** Assistant metin parçaları geldikçe (UI stream köprüsü). */
+  onText?: (text: string) => void;
+  /** Her tool_use için (review-yoğun fazların aktivitesini yüzeye çıkarır). */
+  observer?: (toolUse: { name: string; input: Record<string, unknown> }) => void;
+  /**
+   * v15.13: claudeSpawnEnv ÜSTÜNE eklenecek ekstra env değişkenleri (örn. Agent Teams /
+   * Workflow flag'leri: CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS, CLAUDE_CODE_WORKFLOWS). MyCL
+   * tarafından enjekte edilir (process.env'den değil) → safe-env filtresi etkilemez. Yalnız
+   * ilgili çağrıda set edilir → diğer çağrıların davranışı değişmez.
+   */
+  extraEnv?: Record<string, string>;
+  /**
+   * macOS klasör-guard override. Verilmezse otomatik: Bash tool'u yoksa SAR (read-only), varsa SARMA
+   * (nesting riski). Açıkça `false` → asla sarma; `true` → her zaman sar (yalnız darwin + flag açık).
+   */
+  folderGuard?: boolean;
+}
+
+export interface CliRunResult {
+  ok: boolean;
+  /** Birleştirilmiş assistant metni (tool_use bloklar hariç). */
+  text: string;
+  toolUses: Array<{ name: string; input: Record<string, unknown> }>;
+  turns: number;
+  error?: string;
+  /** result olayından alınan token kullanımı (faz-başına maliyet raporu için). */
+  usage?: TokenUsage;
+}
+
+// IDLE timeout: YZLLM 2026-06-12 — 0 (sınırsız) idi ama çıktı-üretmeyen hung claude SONSUZ takılıyordu (Faz 9
+// 18+ dk). İdle = ÇIKTI YOKLUĞU; 10 dk TAM SESSİZ = gerçek hang/deadlock → öldür. Aktif iş (thinking/tool çıktısı)
+// idle'ı sıfırlar → yavaş-ama-aktif iş ÖLMEZ. Uzun Bash tool'u (npm test/install) 10 dk'yı genelde aşmaz; aşan = stuck.
+const DEFAULT_TIMEOUT_MS = 600_000; // 10 dk hiç çıktı yok → hung → öldür
+// WALL-CLOCK tavanı (YZLLM 2026-06-13): tek claude çağrısı en fazla bu kadar; olaylarla sıfırlanmaz.
+// idle-timer "sürekli akıtan ama bitmeyen" runaway'i kaçırıyordu (Faz 5 rung'ları 133 dk). 30 dk tavan.
+const WALL_CLOCK_MAX_MS = 1_800_000; // 30 dk
+
+function buildArgs(opts: CliRunOpts): string[] {
+  const args: string[] = [
+    "-p",
+    opts.userMessage,
+    "--append-system-prompt",
+    opts.systemPrompt,
+    "--model",
+    opts.modelId,
+    "--output-format",
+    "stream-json",
+    "--verbose",
+    // v15.10: partial mesajlar — uzun thinking/sentez idle-kill olmasın (stdout
+    // canlılığı). Bkz cli-session.ts aynı gerekçe.
+    "--include-partial-messages",
+    // v15.14 (YZLLM canlı-test 0620): acceptEdits Bash izin-prompt'unu önlemiyordu →
+    // borulu/bileşik Bash non-interaktif modda asılıyordu. bypassPermissions prompt'u
+    // kaldırır; tehlikeli-Bash deny baseline'ı (aşağıda) korunur. Bkz cli-backend/cli-session.
+    "--permission-mode",
+    "bypassPermissions",
+    "--add-dir",
+    opts.cwd,
+    "--no-session-persistence",
+  ];
+  // SPREAD (kod-analiz): `--allowedTools <tools...>` variadic — her tool AYRI argv olmalı.
+  // `join(" ")` boşluk içeren desenleri (örn. `Bash(rm *)`) bozuyordu; cli-session zaten spread.
+  if (opts.allowedTools && opts.allowedTools.length > 0) {
+    args.push("--allowedTools", ...opts.allowedTools);
+  }
+  // bypassPermissions ile: tehlikeli-Bash baseline'ı HER ZAMAN ekle (rm/sudo/git-push/chmod/
+  // publish deny — mode'dan önce değerlendirilir → bloklu kalır). READ_ONLY fazları Bash'i
+  // rm-deny'siz açıyordu; baseline o boşluğu kapatır. Bkz tool-policy.withDangerousBashDeny.
+  args.push("--disallowedTools", ...withDangerousBashDeny(opts.disallowedTools));
+  if (opts.maxBudgetUsd !== undefined) {
+    args.push("--max-budget-usd", String(opts.maxBudgetUsd));
+  }
+  // v15.11 GÜVENLİK: --settings ile sandbox (+ ultracode) — ajanı opts.cwd'ye hapset.
+  args.push(...sandboxSettingsArgs(opts.cwd, opts.effort === "ultracode"));
+  if (opts.effort && opts.effort !== "ultracode") {
+    args.push("--effort", opts.effort);
+  }
+  return args;
+}
+
+/**
+ * `claude` CLI'ı tek-atışta çalıştırır, tüm assistant metnini + tool_use'ları toplar.
+ * Hata/timeout durumunda `{ ok:false, error }` döner — caller SDK'ya düşebilir.
+ */
+export async function runClaudeCli(opts: CliRunOpts): Promise<CliRunResult> {
+  await waitIfPaused(); // Duraklat denetimi: yeni LLM çağrısı SINIRI (in-flight beklemez).
+  // v15.11 GÜVENLİK: spawn-öncesi sandbox kapısı (enforce + sandbox yok → çalıştırma).
+  if (!guardSandboxOrWarn()) {
+    return Promise.resolve({
+      ok: false,
+      text: "",
+      toolUses: [],
+      turns: 0,
+      error: "sandbox kurulamadı (policy=enforce) — ajan çalıştırılmadı",
+    });
+  }
+  const args = buildArgs(opts);
+  const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+
+  return new Promise<CliRunResult>((resolve) => {
+    let settled = false;
+    const texts: string[] = [];
+    const toolUses: CliRunResult["toolUses"] = [];
+    let turns = 0;
+    let resultIsError = false;
+    let resultSeen = false;
+    let resultErrorText = "";
+    let stderrTail = "";
+    let usage: TokenUsage | undefined;
+
+    // Mutlak yol + zenginleştirilmiş PATH — minimal PATH'te bare "claude" ENOENT.
+    const claudeBin = resolveClaudePath() ?? "claude";
+    // macOS klasör-guard (TCC izin penceresini kaynağında kes): karar shouldFolderGuard'da (saf+test'li)
+    // — Bash tool'u OLMAYAN read-only çağrılar sandbox-exec ile sarılır, Bash'liler sarılmaz (nesting).
+    const spawnCmd = shouldFolderGuard(opts)
+      ? wrapReadOnlyClaude(claudeBin, args)
+      : { cmd: claudeBin, args };
+    const child = spawn(spawnCmd.cmd, spawnCmd.args, {
+      cwd: opts.cwd,
+      // API key YOK → abonelik; PATH zenginleştirilir. extraEnv (varsa) ÜSTE eklenir
+      // (Agent Teams/Workflow flag'leri için; yoksa davranış birebir korunur).
+      env: opts.extraEnv ? { ...claudeSpawnEnv(), ...opts.extraEnv } : claudeSpawnEnv(),
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+
+    let timer: ReturnType<typeof setTimeout>;
+    let wallTimer: ReturnType<typeof setTimeout> | undefined;
+    const done = (r: CliRunResult): void => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      if (wallTimer) clearTimeout(wallTimer);
+      try { child.kill("SIGTERM"); } catch { /* zaten bitti */ }
+      resolve(r);
+    };
+
+    // IDLE-bazlı: her çıktı satırında sıfırlanır → uzun ama aktif tur öldürülmez.
+    const resetTimer = (): void => {
+      clearTimeout(timer);
+      if (timeoutMs <= 0) return; // sınırsız (YZLLM): idle-kill kapalı
+      timer = setTimeout(() => {
+        log.warn("cli-run", "idle timeout — killing claude", { timeoutMs });
+        done({ ok: false, text: texts.join(""), toolUses, turns, usage, error: `cli idle timeout ${timeoutMs}ms` });
+      }, timeoutMs);
+    };
+    resetTimer();
+
+    // WALL-CLOCK cap (YZLLM 2026-06-13): idle-timer çıktı geldikçe sıfırlanır → sürekli
+    // thinking/tool akıtan ama ASLA bitmeyen çağrı (Faz 5 rung'ları 133 dk) idle-out olmaz.
+    // Bu sabit tavan spawn'da bir kez kurulur, sıfırlanmaz → runaway'i keser.
+    const wallClockMs = opts.wallClockMs ?? WALL_CLOCK_MAX_MS;
+    if (wallClockMs > 0) {
+      wallTimer = setTimeout(() => {
+        log.warn("cli-run", "WALL-CLOCK cap — killing claude (runaway/sonsuz-döngü)", {
+          wallClockMs,
+          model: opts.modelId,
+          toolUsesSoFar: toolUses.length,
+        });
+        done({ ok: false, text: texts.join(""), toolUses, turns, usage, error: `cli wall-clock cap ${wallClockMs}ms aşıldı (olası sonsuz-döngü)` });
+      }, wallClockMs);
+    }
+
+    const rl = createInterface({ input: child.stdout! });
+    rl.on("line", (line) => {
+      resetTimer();
+      const trimmed = line.trim();
+      if (!trimmed) return;
+      let ev: Record<string, unknown>;
+      try {
+        ev = JSON.parse(trimmed) as Record<string, unknown>;
+      } catch {
+        return; // NDJSON olmayan satır (banner) — atla
+      }
+      const type = ev.type;
+      if (type === "rate_limit_event") {
+        // v15.12 Auto Mode: abonelik usage-limit + resetsAt sinyali.
+        noteRateLimitEvent(ev.rate_limit_info as RateLimitInfo | undefined);
+      } else if (type === "assistant") {
+        const msg = ev.message as { content?: unknown[] } | undefined;
+        for (const block of Array.isArray(msg?.content) ? msg!.content : []) {
+          const b = block as Record<string, unknown>;
+          if (b.type === "text" && typeof b.text === "string") {
+            texts.push(b.text);
+            opts.onText?.(b.text);
+          } else if (b.type === "tool_use") {
+            const tu = {
+              name: String(b.name ?? ""),
+              input: (b.input as Record<string, unknown>) ?? {},
+            };
+            toolUses.push(tu);
+            opts.observer?.(tu);
+          }
+        }
+      } else if (type === "result") {
+        resultSeen = true;
+        resultIsError = ev.is_error === true || ev.subtype === "error";
+        if (resultIsError) resultErrorText = String(ev.result ?? ev.error ?? "");
+        if (typeof ev.num_turns === "number") turns = ev.num_turns;
+        const u = ev.usage as Record<string, unknown> | undefined;
+        if (u) {
+          usage = {
+            input_tokens: Number(u.input_tokens ?? 0),
+            output_tokens: Number(u.output_tokens ?? 0),
+            cache_read_input_tokens: Number(u.cache_read_input_tokens ?? 0),
+            cache_creation_input_tokens: Number(u.cache_creation_input_tokens ?? 0),
+          };
+          // F1: faz-maliyet kovasını CLI modunda da doldur (eskiden yalnız API yolu
+          // doldururdu → CLI'da panel boştu) + gerçek $ + model. Aktif kova yoksa no-op.
+          const costUsd = typeof ev.total_cost_usd === "number" ? ev.total_cost_usd : undefined;
+          recordTokenUsage({ ...usage, total_cost_usd: costUsd, model: opts.modelId });
+        }
+      }
+    });
+
+    child.stderr!.on("data", (chunk: Buffer) => {
+      // idle timer'ı SIFIRLAMA — stderr gürültüsü stdout-hang'i maskelemesin.
+      stderrTail = (stderrTail + chunk.toString()).slice(-2000);
+    });
+
+    child.on("error", (err) => {
+      done({ ok: false, text: texts.join(""), toolUses, turns, error: `spawn failed: ${String(err)}` });
+    });
+
+    child.on("close", (code) => {
+      const ok = code === 0 && (!resultSeen || !resultIsError);
+      // Auto Mode: hata abonelik usage/rate-limit imzası taşıyorsa CLI'yi limitli işaretle
+      // (rate_limit_event GELMEYEN hata-yolu için) → backendForRole "auto" API'ye düşebilsin.
+      if (!ok) {
+        const rl = detectCliRateLimit(`${resultErrorText} ${stderrTail}`);
+        if (rl) noteCliRateLimitError(rl);
+      }
+      // YZLLM 2026-06-11 "denesin zaten çalışacak": kararı çağrı SONUCUNA göre ver (başardıysa limitleme + temizle;
+      // gerçekten başarısız + blocked-event görülmüşse API'ye geç).
+      finalizeCliRateLimit(ok);
+      // YZLLM 2026-06-17: 529 "Overloaded" claude exit-kodunu 1 yapıyor ama gerçek mesaj STDOUT/text'te
+      // ("API Error: 529 Overloaded"), STDERR'de değil → `error` 529 içermiyordu → failPhase'in 529-branch'i
+      // eşleşmiyor → debug 3 dk boşa araştırıyordu. Transient imzayı text/result'tan `error`'a TAŞI ki
+      // failPhase doğru ele alsın (oto-çözüm/debug yerine "API yoğun, bekle + Çalıştır").
+      const fullText = texts.join("");
+      const transientHint = /529|Overloaded|overloaded_error/i.test(`${fullText} ${stderrTail} ${resultErrorText}`)
+        ? " :: API 529 Overloaded (transient — geçici sunucu yükü)"
+        : "";
+      done({
+        ok,
+        text: fullText,
+        toolUses,
+        turns,
+        usage,
+        error: ok ? undefined : `claude exit=${code}${stderrTail ? ` :: ${stderrTail.slice(0, 300)}` : ""}${transientHint}`,
+      });
+    });
+  });
+}

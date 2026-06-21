@@ -1,0 +1,152 @@
+// living-docs — pure helper testleri (buildLivingDocsPrompt + parseLivingDocsBlock).
+// LLM turu (updateLivingDocs) saha-doğrulamada test edilir; burada saf mantık.
+
+import { describe, expect, it } from "vitest";
+import {
+  buildLivingDocsPrompt,
+  parseLivingDocsBlock,
+  parseHelpPages,
+  assignHelpPageDates,
+  extractRoutesFromFeatures,
+} from "../src/living-docs.js";
+
+const TMPL =
+  "intent={{INTENT_SUMMARY}} feat={{EXISTING_FEATURES}} guide={{EXISTING_USER_GUIDE}} instr={{USER_GUIDE_INSTRUCTION}}";
+
+describe("buildLivingDocsPrompt", () => {
+  it("placeholder'ları doldurur; UI varsa user-guide üretim talimatı", () => {
+    const p = buildLivingDocsPrompt({
+      tmpl: TMPL,
+      intentSummary: "kategori ekle",
+      existingFeatures: "## CRUD",
+      existingUserGuide: "## Nasıl",
+      includeUserGuide: true,
+    });
+    expect(p).toContain("intent=kategori ekle");
+    expect(p).toContain("feat=## CRUD");
+    expect(p).toContain("guide=## Nasıl");
+    expect(p).toContain("user_guide_en_md"); // çift-dil üretim talimatı (TR + EN)
+  });
+
+  it("UI yoksa user_guide boş bırakma talimatı", () => {
+    const p = buildLivingDocsPrompt({
+      tmpl: TMPL,
+      intentSummary: "",
+      existingFeatures: "(none yet)",
+      existingUserGuide: "(none yet)",
+      includeUserGuide: false,
+    });
+    expect(p).toContain("intent=(no intent recorded)"); // boş intent fallback
+    expect(p).toContain("NO end-user UI");
+  });
+});
+
+describe("parseLivingDocsBlock", () => {
+  it("geçerli {kind:docs} bloğu → çift-dil kılavuz parse", () => {
+    const text = `Buyrun:\n{"kind":"docs","features_md":"# Özellikler\\n## CRUD","user_guide_tr_md":"# Kılavuz","user_guide_en_md":"# Guide"}`;
+    const r = parseLivingDocsBlock(text);
+    expect(r).not.toBeNull();
+    expect(r!.features_md).toContain("## CRUD");
+    expect(r!.user_guide_tr_md).toBe("# Kılavuz");
+    expect(r!.user_guide_en_md).toBe("# Guide");
+  });
+
+  it("eski tek-alan user_guide_md → TR'ye düşer (geriye uyumlu)", () => {
+    const r = parseLivingDocsBlock(`{"kind":"docs","features_md":"## X","user_guide_md":"# Eski"}`);
+    expect(r!.user_guide_tr_md).toBe("# Eski");
+    expect(r!.user_guide_en_md).toBe("");
+  });
+
+  it("kılavuz yok → boş string'e düşer (features yeterli)", () => {
+    const r = parseLivingDocsBlock(`{"kind":"docs","features_md":"## X"}`);
+    expect(r).not.toBeNull();
+    expect(r!.user_guide_tr_md).toBe("");
+    expect(r!.user_guide_en_md).toBe("");
+  });
+
+  it("features_md boş → null (geçersiz)", () => {
+    expect(parseLivingDocsBlock(`{"kind":"docs","features_md":"  "}`)).toBeNull();
+  });
+
+  it("blok yok → null", () => {
+    expect(parseLivingDocsBlock("düz metin, json yok")).toBeNull();
+  });
+
+  it("tech_doc_md + çift-dil help_pages parse edilir (route features'ta varsa)", () => {
+    const text = `{"kind":"docs","features_md":"## X\\nWhere: /kullanicilar","tech_doc_md":"# Teknik","help_pages":[{"route":"/kullanicilar","title_tr":"Ekle","title_en":"Add","body_tr":"adımlar","body_en":"steps"}]}`;
+    const r = parseLivingDocsBlock(text);
+    expect(r!.tech_doc_md).toBe("# Teknik");
+    expect(r!.help_pages).toHaveLength(1);
+    expect(r!.help_pages[0].route).toBe("/kullanicilar");
+    expect(r!.help_pages[0].title_en).toBe("Add");
+    expect(r!.help_pages[0].body_en).toBe("steps");
+  });
+
+  it("yeni alanlar yoksa boş default (geriye uyumlu)", () => {
+    const r = parseLivingDocsBlock(`{"kind":"docs","features_md":"## X"}`);
+    expect(r!.tech_doc_md).toBe("");
+    expect(r!.help_pages).toEqual([]);
+  });
+});
+
+describe("extractRoutesFromFeatures", () => {
+  it("markdown'dan route yollarını çıkarır", () => {
+    const routes = extractRoutesFromFeatures("Where: /kullanicilar\n- `/raporlar/aylik` sayfası\n(/ana-sayfa)");
+    expect(routes).toContain("/kullanicilar");
+    expect(routes).toContain("/raporlar/aylik");
+    expect(routes).toContain("/ana-sayfa");
+  });
+});
+
+describe("parseHelpPages", () => {
+  it("features'ta OLMAYAN route'a eşleneni ELER (uydurma '?' hedefi önle)", () => {
+    const raw = [
+      { route: "/var", title_tr: "a", title_en: "a", body_tr: "x", body_en: "x" },
+      { route: "/yok", title_tr: "b", title_en: "b", body_tr: "y", body_en: "y" },
+    ];
+    const r = parseHelpPages(raw, ["/var"]);
+    expect(r).toHaveLength(1);
+    expect(r[0].route).toBe("/var");
+  });
+
+  it("knownRoutes boşsa (greenfield) çapraz-kontrol atlanır", () => {
+    const r = parseHelpPages([{ route: "/x", title_tr: "a", title_en: "A", body_tr: "b", body_en: "B" }], []);
+    expect(r).toHaveLength(1);
+    expect(r[0].body_en).toBe("B");
+  });
+
+  it("eski şema (task_title/body_md) → her iki dile düşer (dayanıklılık)", () => {
+    const r = parseHelpPages([{ route: "/x", task_title: "Ekle", body_md: "adım" }], ["/x"]);
+    expect(r).toHaveLength(1);
+    expect(r[0].title_tr).toBe("Ekle");
+    expect(r[0].title_en).toBe("Ekle");
+    expect(r[0].body_en).toBe("adım");
+  });
+
+  it("eksik alan / dizi-değil → atlanır/boş", () => {
+    expect(parseHelpPages([{ route: "/x" }], ["/x"])).toHaveLength(0); // başlık/gövde yok
+    expect(parseHelpPages("not-array", [])).toEqual([]);
+  });
+});
+
+describe("assignHelpPageDates", () => {
+  const fresh = [{ route: "/a", title_tr: "A", title_en: "A", body_tr: "icerik", body_en: "content" }];
+  it("içerik DEĞİŞMEMİŞSE eski tarihi korur", () => {
+    const existing = [
+      { route: "/a", title_tr: "A", title_en: "A", body_tr: "icerik", body_en: "content", updated_at: "2026-01-01" },
+    ];
+    const r = assignHelpPageDates(fresh, existing, "2026-06-14");
+    expect(r[0].updated_at).toBe("2026-01-01");
+  });
+  it("EN içeriği DEĞİŞMİŞSE bugüne günceller", () => {
+    const existing = [
+      { route: "/a", title_tr: "A", title_en: "A", body_tr: "icerik", body_en: "OLD", updated_at: "2026-01-01" },
+    ];
+    const r = assignHelpPageDates(fresh, existing, "2026-06-14");
+    expect(r[0].updated_at).toBe("2026-06-14");
+  });
+  it("yeni sayfa → bugün", () => {
+    const r = assignHelpPageDates(fresh, [], "2026-06-14");
+    expect(r[0].updated_at).toBe("2026-06-14");
+  });
+});

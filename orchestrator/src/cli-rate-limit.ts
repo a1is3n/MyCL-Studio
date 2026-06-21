@@ -1,0 +1,356 @@
+// cli-rate-limit — Auto Mode için Claude Code ABONELİĞİ (CLI) usage-limit takibi.
+//
+// Kullanıcı (2026-06-03): "Auto Mode: CLI ile başla; CLI limiti dolunca API kullan;
+// limit açılınca CLI'ye dön." Limit = Claude Code aboneliğinin kullanım kapağı
+// (API rate-limit'i DEĞİL). Reset zamanı `claude -p --output-format stream-json`
+// çıktısındaki özel event'ten gelir (canlı doğrulandı, claude 2.1.158):
+//
+//   {"type":"rate_limit_event","rate_limit_info":{
+//      "status":"allowed",          // allowed | allowed_warning (İKİSİ DE servis edildi) | rejected (BLOKLANDI)
+//      "resetsAt":1780504200,       // ← Unix epoch SANİYE: pencere ne zaman açılır
+//      "rateLimitType":"five_hour", // five_hour | seven_day | seven_day_opus | seven_day_sonnet
+//      "isUsingOverage":false}}     // overageStatus ile birlikte YANILTICI — blok kararında kullanma
+//
+// Yani "resets in 1h" metnini parse etmeye gerek yok — resetsAt mutlak timestamp.
+// Bu modül global state tutar (abonelik tüm rollerde ortak); backendForRole "auto"
+// rolünü bu state'e göre çözer. Her geçiş GÖRÜNÜR mesajla (sessiz fallback yasağı).
+
+import { emitChatMessage } from "./ipc.js";
+import { log } from "./logger.js";
+
+export interface RateLimitInfo {
+  /** "allowed" | "allowed_warning" (ikisi de SERVİS EDİLDİ) | "rejected" (BLOKLANDI). */
+  status?: string;
+  resetsAt?: number; // Unix epoch SANİYE
+  rateLimitType?: string; // five_hour | seven_day | seven_day_opus | seven_day_sonnet
+  isUsingOverage?: boolean;
+}
+
+// ───────────────────────── Saf çekirdek (test edilebilir) ─────────────────────────
+
+/**
+ * Abonelik isteği BLOKLANDI mı (servis EDİLMEDİ)? Claude Code status sözlüğü (doğrulandı):
+ * "allowed" (servis edildi) | "allowed_warning" (servis edildi + "limite yaklaşıyorsun" uyarısı) |
+ * "rejected" (BLOKLANDI). YALNIZ "rejected" = bloklu → API'ye geç. "allowed_warning" SERVİS
+ * EDİLMİŞTİR → API'ye DÜŞME (eski "allowed-olmayan-her-şey-bloklu" mantığı yanlış pozitif
+ * veriyordu: seven_day allowed_warning'i "limit doldu" sanıp gereksiz fallback yapıyordu).
+ * Bilinmeyen status → bloklanma (noteRateLimitEvent gözlem için loglar). overageStatus YANILTICI.
+ */
+export function isBlockedStatus(status: string | undefined): boolean {
+  return typeof status === "string" && status.toLowerCase() === "rejected";
+}
+
+/** resetsAt (saniye) → gelecekteyse limitedUntil (ms); geçmiş/yoksa undefined. */
+export function computeLimitedUntilMs(
+  resetsAtSec: number | undefined,
+  nowMs: number,
+): number | undefined {
+  if (typeof resetsAtSec !== "number" || !Number.isFinite(resetsAtSec)) return undefined;
+  const ms = resetsAtSec * 1000;
+  return ms > nowMs ? ms : undefined;
+}
+
+/** Şu an CLI limitli mi (saf): limitedUntil var ve henüz geçmedi. */
+export function isLimited(limitedUntilMs: number | undefined, nowMs: number): boolean {
+  return typeof limitedUntilMs === "number" && nowMs < limitedUntilMs;
+}
+
+/**
+ * Yapılandırılmış backend + limit durumu → efektif backend. "auto": limitliyse
+ * "api", değilse "cli". "api"/"cli" aynen döner. Bilinmeyen → "api" (güvenli default).
+ */
+export function resolveAuto(configured: string, limited: boolean): "api" | "cli" {
+  if (configured === "auto") return limited ? "api" : "cli";
+  if (configured === "cli") return "cli";
+  return "api";
+}
+
+// ───────────────────────── Impure global state ─────────────────────────
+
+let _limitedUntilMs: number | undefined;
+// Optimistik probe (YZLLM 2026-06-11): limitliyken en geç bu aralıkta bir kez CLI denenir (kullanıcı kredi/limit
+// açmış olabilir — resetsAt yanıltıcı). Başarılıysa noteCliSuccess temizler.
+let _lastProbeMs = 0;
+const PROBE_INTERVAL_MS = 120_000; // 2 dk
+// Çağrı-içinde görülen blocked rate_limit_event'i çağrı SONUCU karar verene dek beklet (overage çağrıyı kurtarabilir).
+let _pendingBlockUntil: number | undefined;
+let _pendingBlockType: string | undefined;
+let _lastResetsAtMs: number | undefined; // en son görülen resetsAt (servis edilmiş event'lerden de)
+let _switchEmittedUntil: number | undefined; // hangi pencere için "API'ye geçildi" mesajı verildi
+let _resumeArmed = false; // limit set edildi → reset geçince "CLI'ye dönüldü" mesajı verilecek
+
+function fmtClock(ms: number): string {
+  const d = new Date(ms);
+  const hh = String(d.getHours()).padStart(2, "0");
+  const mm = String(d.getMinutes()).padStart(2, "0");
+  return `${hh}:${mm}`;
+}
+
+function enterLimited(untilMs: number, rateLimitType?: string): void {
+  _limitedUntilMs = untilMs;
+  _resumeArmed = true;
+  // Probe sayacını limit-set anına çek → ilk optimistik probe 2 dk SONRA (hemen değil; aksi ilk çağrı hep probe'lar).
+  _lastProbeMs = Date.now();
+  if (_switchEmittedUntil !== untilMs) {
+    _switchEmittedUntil = untilMs;
+    const mins = Math.max(1, Math.round((untilMs - Date.now()) / 60000));
+    const win = rateLimitType ? ` (${rateLimitType})` : "";
+    emitChatMessage(
+      "system",
+      `🔁 Claude Code aboneliği limiti doldu${win}. API'ye geçildi; limit ~${mins} dk sonra (${fmtClock(untilMs)}) açılacak — sonra otomatik CLI'ye dönülür.`,
+    );
+    log.info("cli-rate-limit", "entered limited (auto → API)", { untilMs, rateLimitType });
+  }
+}
+
+/**
+ * stream-json `rate_limit_event`'ini işle. resetsAt her zaman saklanır (servis
+ * edilmiş event'lerden bile — limit dolunca reset'i bilmek için). status bloklu
+ * ise Auto modda API'ye geçilir.
+ */
+export function noteRateLimitEvent(info: RateLimitInfo | undefined): void {
+  if (!info) return;
+  const nowMs = Date.now();
+  const untilCandidate = computeLimitedUntilMs(info.resetsAt, nowMs);
+  if (untilCandidate !== undefined) _lastResetsAtMs = untilCandidate;
+
+  if (isBlockedStatus(info.status)) {
+    // YZLLM 2026-06-11: "hiç denemediği için böyle yapıyor — denesin zaten çalışacak." rate_limit_event{rejected}
+    // çağrı-İÇİNDE gelir ama overage (ekstra kullanım) krediniz varsa çağrı YİNE DE BAŞARABİLİR. O yüzden BURADA
+    // API'ye GEÇME (enterLimited yok) — sadece bekleyen-blok işaretle. Çağrı bitince finalizeCliRateLimit karar
+    // verir: başardıysa limit YOK (overage karşıladı), gerçekten başarısızsa O ZAMAN limitle.
+    _pendingBlockUntil = untilCandidate ?? _lastResetsAtMs ?? nowMs + 15 * 60_000;
+    _pendingBlockType = info.rateLimitType;
+  } else if (
+    typeof info.status === "string" &&
+    info.status.length > 0 &&
+    info.status.toLowerCase() !== "allowed" &&
+    info.status.toLowerCase() !== "allowed_warning"
+  ) {
+    // Bilinmeyen status (allowed/allowed_warning/rejected dışı) → BLOKLAMA (yanlış-pozitif
+    // riski; servis edilmiş olabilir). Yalnız gözlem için logla — yeni bir hard-block status
+    // çıkarsa burada görülür ve bilinçli eklenir.
+    log.warn("cli-rate-limit", "bilinmeyen status — bloklanmadı (gözlem)", { status: info.status });
+  }
+}
+
+/**
+ * CLI run'ı usage-limit hatasıyla bitti (result event is_error + rate-limit imzası).
+ * resetsAt bilinmiyorsa son bilinen reset ya da kısa backoff kullanılır.
+ */
+export function noteCliRateLimitError(rateLimitType?: string): void {
+  const nowMs = Date.now();
+  const until = (_lastResetsAtMs && _lastResetsAtMs > nowMs ? _lastResetsAtMs : undefined) ?? nowMs + 15 * 60_000;
+  enterLimited(until, rateLimitType);
+}
+
+/**
+ * CLI HATA metninde abonelik usage / rate-limit imzası var mı? SAF + DAR — yalnız net
+ * usage/rate-limit ifadeleri eşleşir (genel bir hatayı yanlışlıkla "limit" sanıp gereksiz
+ * API'ye düşmemek için). Eşleşirse tip ("usage-limit"/"rate-limit") döner, yoksa null.
+ * `noteCliRateLimitError` ile birlikte: result is_error yolunda çağrılır (auto-mode fallback'i besler).
+ */
+export function detectCliRateLimit(text: string): string | null {
+  const t = (text ?? "").toLowerCase();
+  if (!t) return null;
+  if (/usage[ _-]?limit/.test(t)) return "usage-limit";
+  // NOT: çıplak "429" eklenmedi — satır no ("file.ts:429") yanlış-pozitifi; "too many requests" gerçek 429'u kapsar.
+  if (/rate[ _-]?limit|too many requests/.test(t)) return "rate-limit";
+  return null;
+}
+
+/**
+ * Şu an CLI limitli mi (impure — Date.now). Limit geçtiyse temizler + bir kez
+ * "CLI'ye dönüldü" mesajı verir (görünür reset). backendForRole "auto" bunu çağırır.
+ */
+export function cliCurrentlyLimited(): boolean {
+  const nowMs = Date.now();
+  if (isLimited(_limitedUntilMs, nowMs)) {
+    // YZLLM 2026-06-11: "ekstra kullanım için para yükledim, niye anlamadı." resetsAt YANILTICI olabilir — kullanıcı
+    // limiti erken açmış olabilir. OPTIMISTIK PROBE: aralıkla bir CLI denemesine izin ver. Başarılı olursa
+    // noteCliSuccess() limiti temizler + CLI'de kalınır; hâlâ limitliyse rate_limit_event yeniden limitler.
+    if (nowMs - _lastProbeMs >= PROBE_INTERVAL_MS) {
+      _lastProbeMs = nowMs;
+      log.info("cli-rate-limit", "limit probe — CLI deneniyor (kullanıcı erken açmış olabilir)");
+      return false;
+    }
+    return true;
+  }
+  // Limit geçti / hiç yoktu:
+  if (_limitedUntilMs !== undefined) {
+    _limitedUntilMs = undefined;
+    _switchEmittedUntil = undefined;
+    if (_resumeArmed) {
+      _resumeArmed = false;
+      emitChatMessage("system", "✅ Claude Code aboneliği limiti açıldı — CLI'ye geri dönüldü.");
+      log.info("cli-rate-limit", "limit reset (auto → CLI)");
+    }
+  }
+  return false;
+}
+
+/**
+ * CLI çağrısı rate-limit OLMADAN başarıyla tamamlandı → limit (varsa) GERÇEKTEN açılmış (kullanıcı kredi yükledi /
+ * pencere erken açıldı). Cache'i temizle + görünür mesaj. CLI backend'i her başarılı turdan sonra çağırır.
+ */
+export function noteCliSuccess(): void {
+  if (_limitedUntilMs === undefined) return;
+  _limitedUntilMs = undefined;
+  _switchEmittedUntil = undefined;
+  _resumeArmed = false;
+  emitChatMessage(
+    "system",
+    "✅ Claude Code aboneliği yeniden çalışıyor (limit açılmış / kredi yüklenmiş) — CLI'ye dönüldü.",
+  );
+  log.info("cli-rate-limit", "limit cleared on successful CLI call (early)");
+}
+
+/**
+ * CLI çağrısı bitti → blocked rate_limit_event GÖRÜLDÜYSE kararı ŞİMDİ ver (YZLLM 2026-06-11: "denesin zaten
+ * çalışacak"). ok → çağrı BAŞARDI (overage karşıladı / limit yanıltıcı) → limitleme; bekleyen-blok at + (varsa eski)
+ * limiti temizle. !ok → çağrı GERÇEKTEN başarısız + blocked görülmüştü → ŞİMDİ API'ye geç (enterLimited).
+ */
+export function finalizeCliRateLimit(ok: boolean): void {
+  if (ok) {
+    _pendingBlockUntil = undefined;
+    _pendingBlockType = undefined;
+    noteCliSuccess(); // önceki bir limit varsa temizle + görünür mesaj
+    return;
+  }
+  if (_pendingBlockUntil !== undefined) {
+    enterLimited(_pendingBlockUntil, _pendingBlockType);
+    _pendingBlockUntil = undefined;
+    _pendingBlockType = undefined;
+  }
+}
+
+/** Test/teşhis: state'i sıfırla. */
+export function resetCliRateLimitState(): void {
+  _limitedUntilMs = undefined;
+  _lastResetsAtMs = undefined;
+  _switchEmittedUntil = undefined;
+  _resumeArmed = false;
+  _lastProbeMs = 0;
+  _pendingBlockUntil = undefined;
+  _pendingBlockType = undefined;
+}
+
+/** Test/teşhis: aktif limitedUntil (ms) veya undefined. */
+export function getCliLimitedUntilMs(): number | undefined {
+  return _limitedUntilMs;
+}
+
+// ───────────────────────── Faz-içi kesintisiz retry (Auto Mode) ─────────────────────────
+
+export interface FallbackableBackend<O extends { kind: string }> {
+  run(): Promise<O>;
+  abort?(): void;
+  submitAskqAnswer?(askqId: string, selected: string): void;
+}
+
+/** Auto fallback görünür mesajı için yön etiketleri. */
+export interface AutoFallbackLabels {
+  from: string;
+  to: string;
+}
+
+/**
+ * Auto Mode SİMETRİK + DÖNGÜSEL faz-içi kesintisiz retry. Amaç: işi BİR ŞEKİLDE
+ * çalıştırmak (YZLLM 2026-06-17 — "öncelik fark etmez, birine ulaşamazsak diğerine,
+ * ona da ulaşamazsak ötekine tekrar; böyle böyle gider"). Birincil backend'i çalıştır;
+ * KALICI `failed` DÖNERSE *veya* EXCEPTION FIRLATIRSA (geçici hatalar — overloaded/5xx
+ * — zaten backend içinde retry'lı; API kredi-yok/invalid_request ise SDK `throw` eder)
+ * ikincile geç; o da fail/throw ederse tekrar birincile dön — birbiri ardına DÖNÜŞÜMLÜ
+ * dene, biri başarana dek. Yön caller'a göre (autoBackendPair): birincil=CLI/ikincil=API
+ * ya da limit penceresinde tersi. SONSUZ değil: en çok `MAX_FALLBACK_ATTEMPTS` deneme +
+ * turlar arası ARTAN backoff (transient pencereye zaman tanır + token-yakımını sınırlar).
+ * `aborted` (kullanıcı iptali) ya da başarı → döngü biter, o sonuç döner. Üst sınıra
+ * ulaşılırsa son `failed` döner; hiç `failed` sonuç yoksa (hep throw) son exception
+ * YUKARI fırlatılır (ikisi de kalıcı down → DÜRÜST hata; sessiz yutma yok). KRİTİK:
+ * `run()` try-catch'lidir — ikinci kanalın throw'u tüm fallback'i çökertmez (canlı bug).
+ * submitAskqAnswer/abort her zaman güncel `active` backend'e yönlenir (geçişte pending
+ * askq yok: önceki run bitmiş olur). Yalnız Auto Mode'da çağrılır (explicit "api"/"cli"
+ * sarmalanmaz → strict, sessiz fallback yok).
+ */
+const MAX_FALLBACK_ATTEMPTS = 6; // 3 tam tur (birincil↔ikincil); aşılırsa dürüst hata
+const sleep = (ms: number): Promise<void> => new Promise((res) => setTimeout(res, ms));
+
+export function autoFallbackBackend<O extends { kind: string }, B extends FallbackableBackend<O>>(
+  makePrimary: () => B,
+  makeSecondary: () => B,
+  labels: AutoFallbackLabels,
+  opts?: { backoffMs?: (attempt: number) => number }, // test enjeksiyonu; default aşağıda
+): B {
+  // İlk fallback (attempt 1) ANINDA dener (farklı kanal — beklemeye gerek yok); tekrar
+  // AYNI kanala dönerken (attempt ≥2) artan backoff transient pencereye zaman tanır.
+  const backoffMs =
+    opts?.backoffMs ?? ((attempt: number) => (attempt <= 1 ? 0 : Math.min((attempt - 1) * 2000, 12000)));
+  const factories: Array<{ make: () => B; name: string }> = [
+    { make: makePrimary, name: labels.from },
+    { make: makeSecondary, name: labels.to },
+  ];
+  let active: B = makePrimary();
+  const wrapper: FallbackableBackend<O> = {
+    run: async (): Promise<O> => {
+      let last: O | undefined;
+      let lastErr: unknown;
+      for (let attempt = 0; attempt < MAX_FALLBACK_ATTEMPTS; attempt++) {
+        const turn = factories[attempt % 2];
+        if (attempt > 0) {
+          const prev = factories[(attempt - 1) % 2];
+          emitChatMessage(
+            "system",
+            `↪️ ${prev.name} başarısız oldu — ${turn.name} ile yeniden deneniyor ` +
+              `(Auto Mode, deneme ${attempt + 1}/${MAX_FALLBACK_ATTEMPTS}).`,
+          );
+          log.info("cli-rate-limit", "auto fallback (cyclic)", { to: turn.name, attempt: attempt + 1 });
+          await sleep(backoffMs(attempt)); // attempt1:0, sonra 2s,4s,6s,8s (12s tavan)
+          active = turn.make();
+        }
+        // attempt 0: active zaten makePrimary() (ctor'da) — gereksiz yeniden-make yok
+        let r: O;
+        try {
+          r = await active.run();
+        } catch (err) {
+          // Backend `failed` kind döndürmek YERİNE EXCEPTION fırlattı (örn. API
+          // "credit balance too low"/invalid_request → Anthropic SDK throw eder).
+          // Döngüyü KIRMA: bu kanalı "şu an çalışmıyor" say, diğer kanala geç
+          // (YZLLM 2026-06-17: "biri sorun çıkarırsa diğerine, sürekli gidip gel").
+          // Canlı kanıt: CLI fail→API'ye geçti→API throw→tüm fallback çöktü (CLI'ye
+          // geri DÖNEMEDİ). try-catch olmadan ikinci kanalın throw'u her şeyi deler.
+          lastErr = err;
+          log.info("cli-rate-limit", "auto fallback (backend threw)", {
+            backend: turn.name,
+            attempt: attempt + 1,
+          });
+          continue; // diğer kanalı dene
+        }
+        if (r.kind !== "failed") return r; // başarı ya da aborted → bitti
+        last = r;
+      }
+      if (last !== undefined) return last; // ≥1 'failed' sonuç → son dürüst hatayı döndür
+      throw lastErr; // hiç sonuç yok, yalnız exception'lar → son exception'ı yukarı ver
+    },
+    abort: () => active.abort?.(),
+    submitAskqAnswer: (id: string, sel: string) => active.submitAskqAnswer?.(id, sel),
+  };
+  return wrapper as unknown as B;
+}
+
+export const CLI_LABEL = "Abonelik (CLI)";
+export const API_LABEL = "API";
+
+/**
+ * Auto Mode yön seçimi: çözülmüş efektif backend'e göre birincil/ikincil sırala +
+ * doğru yön etiketleriyle autoFallbackBackend döndür. effective="cli" → CLI birincil
+ * (API fallback); "api" (limit penceresi) → API birincil (CLI fallback). 3 factory bunu çağırır.
+ */
+export function autoBackendPair<O extends { kind: string }, B extends FallbackableBackend<O>>(
+  effective: "api" | "cli",
+  makeCli: () => B,
+  makeApi: () => B,
+): B {
+  return effective === "cli"
+    ? autoFallbackBackend<O, B>(makeCli, makeApi, { from: CLI_LABEL, to: API_LABEL })
+    : autoFallbackBackend<O, B>(makeApi, makeCli, { from: API_LABEL, to: CLI_LABEL });
+}

@@ -1,0 +1,408 @@
+// inspector — "iki bilim insanı" denetim/tartışma çekirdeği (kendi-yeterlilik mekanizması, AŞAMA 1).
+//
+// Tasarım (project_self_sufficiency_roadmap): orkestratörün ÜSTÜNDE bağımsız bir MÜFETTİŞ.
+//   - ÇEŞİTLİLİK: müfettiş FARKLI AİLE modeli (Sonnet) — orkestratör Opus. Aynı-aile ardışık
+//     sürüm kör-noktayı paylaşır; çapraz-aile gerçekten farklı ağırlık → farklı kör-nokta.
+//   - VANTAJ: müfettiş niyet + yörünge + sonucu görür; orkestratörün GEREKÇESİNİ değil
+//     (gerekçeyi görürse onun çerçevesine kayar → "anlaşır" → denetim çöker).
+//   - ÇÖZÜM ÖLÇÜTÜ: (1) doğrulanabilir KANIT (müfettiş Read/Grep/Bash ile bizzat doğrular)
+//     (2) kanıt kesin değilse İLKELER (3) çözülmez/yüksek-risk/kanıtsız-anlaşma → İNSANA.
+//   - "Kazanan" = kanıtı/ilkeyi tutan, ikna eden DEĞİL. İtiraf yalnız düşünce-tükenişinden sonra.
+//   - Tartışma TÜRKÇE (translator'sız, insana-yükseltme kayıpsız); protokol talimatı İngilizce.
+//
+// Bu AŞAMA 1: çekirdek modül (müfettiş-geçişi + sınırlı tartışma + çözüm). Orkestratör
+// döngüsüne bağlama (checkpoint hook) + müdahale-seçimi (mekanik taban/asimetrik eşik) +
+// tecrübe katmanı + API-paritesi = sonraki aşamalar.
+
+import { readFile } from "node:fs/promises";
+import { resolve, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
+import { runClaudeCli } from "./cli-run.js";
+import { runReasoning } from "./llm-reasoning.js";
+import { READ_ONLY_DISALLOWED_TOOLS } from "./tool-policy.js";
+import { modelForTier } from "./model-catalog.js";
+import { decideIntervention, type InterventionSignals, type InterventionDecision } from "./inspector-trigger.js";
+import type { MyclConfig } from "./config.js";
+import { log } from "./logger.js";
+
+/** Müfettiş modeli: en iyi SONNET (çapraz-aile çeşitlilik). Orkestratör en iyi Opus'tur. */
+export const INSPECTOR_MODEL_DEFAULT = "claude-sonnet-4-6";
+/** Tartışma için hard güvenlik-tavanı (mekanik devre-kesici). YZLLM: "başta sınırsız, doğal
+ * uzunluğu öğren" → tur sayısını LOGLA (öğren), ama sonsuz-döngü ASLA → yüksek tavan = backstop. */
+const MAX_DEBATE_ROUNDS = 10;
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+
+/** Müfettişe verilen bağlam — orkestratörün GEREKÇESİ KASITLI olarak yok (bağımsızlık). */
+export interface InspectorContext {
+  /** Orijinal kullanıcı niyeti (sapma ölçütü). */
+  intent: string;
+  /** Yörünge özeti — ne karar verildi / ne yapıldı (audit'ten türetilir). */
+  trajectory: string;
+  /** Sonuçlar — ne oluştu (dosyalar, gate çıktıları, test sonuçları). */
+  outcomes: string;
+  /** İncelenen karar/bulgu: orkestratör NE yapıyor/iddia ediyor (gerekçesi DEĞİL). */
+  decision: string;
+  /** Yüksek-risk mi (güvenlik/veri-kaybı/geri-alınamaz)? → anlaşma bile kanıt/insan ister. */
+  highStakes?: boolean;
+  projectRoot: string;
+}
+
+export type InspectorStance = "agree" | "flag" | "escalate";
+
+export interface InspectorVerdict {
+  stance: InspectorStance;
+  /** Türkçe gerekçe (bilim insanı dürüstlüğüyle). */
+  reason: string;
+  /** Bizzat toplanan doğrulanabilir kanıt (varsa). */
+  evidence?: string;
+}
+
+export type DebateResolution =
+  | "agree" // müfettiş baştan katıldı (yüksek-risk değil)
+  | "orchestrator-conceded" // tartışmada orkestratör kanıta teslim oldu → müfettişin yolu
+  | "inspector-conceded" // müfettiş kanıta teslim oldu → orkestratörün yolu
+  | "escalate"; // çözülmedi / yüksek-risk / kanıtsız → İNSANA
+
+export interface DebateOutcome {
+  resolution: DebateResolution;
+  rounds: number;
+  /** Çözüm-hazır özet (insana giderse: sorun + iki pozisyon + kanıt + ayrışma + istenen karar). */
+  summary: string;
+  finalVerdict: InspectorVerdict;
+}
+
+let cachedProtocol: string | null = null;
+
+/** debate-protocol.md'yi yükle (asset; resources'a eklenmeli — bundle notu). Hata→gömülü minimal. */
+async function loadDebateProtocol(): Promise<string> {
+  if (cachedProtocol !== null) return cachedProtocol;
+  try {
+    const p = resolve(__dirname, "..", "..", "assets", "agent-prompts", "debate-protocol.md");
+    cachedProtocol = await readFile(p, "utf-8");
+  } catch (e) {
+    log.warn("inspector", "debate-protocol.md yüklenemedi → gömülü minimal kullanılıyor", {
+      error: String(e),
+    });
+    cachedProtocol = EMBEDDED_PROTOCOL_FALLBACK;
+  }
+  return cachedProtocol;
+}
+
+/** Protokol dosyası okunamazsa (bundle eksikse) çekirdek kurallar yine de uygulansın. */
+const EMBEDDED_PROTOCOL_FALLBACK = [
+  "You are a scientist seeking truth, not victory.",
+  "- Verify by EVIDENCE first (run the test, read the file, reproduce). Evidence — not eloquence — decides.",
+  "- If evidence is inconclusive, the project's principles (verify-before-claim, never-assume, quality-first) decide.",
+  "- Concede ONLY after exhausting your thinking and finding no remaining valid argument — never to seem agreeable, never out of stubbornness.",
+  "- Never assume. State the problem; make sure you are judging the SAME problem.",
+  "- High-stakes (security/data-loss/irreversible) or unprovable agreement → escalate to the human.",
+].join("\n");
+
+/** Fenced/serbest JSON bloğundan verdict çıkar (forced-tool yok; CLI metin-JSON parite). */
+export function parseVerdict(text: string): InspectorVerdict | null {
+  // Son `{...}` JSON bloğunu yakala (fenced ```json veya çıplak).
+  const fences = [...text.matchAll(/```(?:json)?\s*([\s\S]*?)```/g)].map((m) => m[1]);
+  const candidates = fences.length > 0 ? fences : [text];
+  for (const c of candidates.reverse()) {
+    const start = c.indexOf("{");
+    const end = c.lastIndexOf("}");
+    if (start < 0 || end <= start) continue;
+    try {
+      const obj = JSON.parse(c.slice(start, end + 1)) as Record<string, unknown>;
+      const stance = String(obj.stance ?? "").toLowerCase();
+      if (stance === "agree" || stance === "flag" || stance === "escalate") {
+        return {
+          stance: stance as InspectorStance,
+          reason: String(obj.reason ?? "").trim(),
+          evidence: obj.evidence ? String(obj.evidence).trim() : undefined,
+        };
+      }
+    } catch {
+      /* sonraki adaya geç */
+    }
+  }
+  return null;
+}
+
+/** Müfettiş tek-geçiş: Sonnet, kanıt-toplayan (Read/Grep/Bash), bağımsız vantaj → verdict. */
+export async function runInspectorPass(
+  ctx: InspectorContext,
+  priorOrchestratorDefense?: string,
+): Promise<InspectorVerdict> {
+  const protocol = await loadDebateProtocol();
+  const system = [
+    protocol,
+    "",
+    "## YOUR ROLE — THE INSPECTOR (the skeptical scientist)",
+    "You are an INDEPENDENT auditor over the orchestrator. You did NOT make this decision and you do",
+    "NOT see the orchestrator's private reasoning — only intent, trajectory, outcomes, and the decision.",
+    "Judge from your own vantage. GATHER EVIDENCE YOURSELF (read files, run checks) before concluding.",
+    "REPRODUCE-FIRST (mandatory before ruling 'flag'/false-positive): do NOT declare a finding a",
+    "false-positive from reading alone — first ATTEMPT to reproduce it (run the failing gate/check/command",
+    "yourself via Bash, observe the behavior). Use debug as an INVESTIGATION tool: reproduce, isolate,",
+    "then judge. Rule 'flag' only if you CANNOT reproduce a real problem, or you PROVED it is a tooling",
+    "artifact (framework convention, i18n label, heuristic miss). Record your reproduction attempt in 'evidence'.",
+    "Respond in TURKISH. End with EXACTLY one JSON block:",
+    '```json',
+    '{"stance":"agree|flag|escalate","reason":"<Türkçe>","evidence":"<bizzat topladığın kanıt>"}',
+    '```',
+    "- agree: karar doğru/güvenli (kanıt/ilke destekliyor).",
+    "- flag: karar yanlış/riskli — gerekçe + KANIT ver (sapma, false-positive, varsayım, niyetle çelişki).",
+    "- escalate: kanıt kesin değil VEYA yüksek-risk VEYA emin olamıyorsun → insana.",
+  ].join("\n");
+
+  const user = [
+    `## ORİJİNAL NİYET\n${ctx.intent}`,
+    `## YÖRÜNGE (ne yapıldı)\n${ctx.trajectory}`,
+    `## SONUÇLAR\n${ctx.outcomes}`,
+    `## İNCELENEN KARAR (orkestratör ne yapıyor/iddia ediyor)\n${ctx.decision}`,
+    ctx.highStakes ? "## NOT: Bu YÜKSEK-RİSK bir konu (güvenlik/veri/geri-alınamaz)." : "",
+    priorOrchestratorDefense
+      ? `## ORKESTRATÖRÜN SAVUNMASI (buna karşı kendi vantajından değerlendir; çerçevesini ÖZÜMSEME)\n${priorOrchestratorDefense}`
+      : "",
+    "Bizzat kanıt topla, sonra sınıfla.",
+  ]
+    .filter(Boolean)
+    .join("\n\n");
+
+  const res = await runClaudeCli({
+    systemPrompt: system,
+    userMessage: user,
+    modelId: INSPECTOR_MODEL_DEFAULT,
+    cwd: ctx.projectRoot,
+    effort: "max",
+    allowedTools: ["Read", "Grep", "Glob", "Bash"], // bizzat kanıt-toplama (yazma/alt-ajan yasak)
+    disallowedTools: READ_ONLY_DISALLOWED_TOOLS,
+  });
+  if (!res.ok || !res.text.trim()) {
+    // Müfettiş üretemedi → KÖRü körüne "agree" DEME (sessiz-gömme). Kuşkuda insana.
+    log.warn("inspector", "müfettiş-geçişi başarısız → escalate (fail-closed)", { error: res.error });
+    return { stance: "escalate", reason: "Müfettiş değerlendirmesi üretilemedi → güvenli taraf: insana." };
+  }
+  const v = parseVerdict(res.text);
+  if (!v) {
+    log.warn("inspector", "verdict bloğu parse edilemedi → escalate (fail-closed)");
+    return { stance: "escalate", reason: "Müfettiş verdict bloğu üretmedi → insana." };
+  }
+  return v;
+}
+
+/** Orkestratör-savunması: müfettişin bayrağına Opus ile yanıt — savun, KANITLA, ya da teslim ol. */
+async function runOrchestratorDefense(
+  config: MyclConfig,
+  ctx: InspectorContext,
+  flag: InspectorVerdict,
+): Promise<{ text: string; conceded: boolean }> {
+  const protocol = await loadDebateProtocol();
+  const system = [
+    protocol,
+    "",
+    "## YOUR ROLE — THE ORCHESTRATOR (defending your decision as a scientist)",
+    "The inspector flagged your decision. Respond as a scientist: defend with EVIDENCE, or CONCEDE if",
+    "the inspector is right. Force your thinking to its limit FIRST; concede ONLY if you genuinely have",
+    "no remaining valid argument — never to be agreeable, never out of stubbornness. Respond in TURKISH.",
+    "End with EXACTLY one JSON block:",
+    '```json',
+    '{"conceded":true|false,"reason":"<Türkçe: kanıtınla savun ya da neden teslim olduğun>"}',
+    '```',
+  ].join("\n");
+  const user = [
+    `## SENİN KARARIN\n${ctx.decision}`,
+    `## MÜFETTİŞİN BAYRAĞI\n${flag.reason}${flag.evidence ? `\n\nKanıtı:\n${flag.evidence}` : ""}`,
+    "Kanıtla savun ya da teslim ol.",
+  ].join("\n\n");
+
+  const modelId = modelForTier("strong", config.selected_models.model_tiers).id; // orkestratör = en iyi Opus
+  const r = await runReasoning(config, {
+    systemPrompt: system,
+    userMessage: user,
+    modelId,
+    projectRoot: ctx.projectRoot,
+    effort: "max",
+  });
+  const text = r.ok ? r.text : "";
+  const conceded = /"conceded"\s*:\s*true/.test(text);
+  return { text, conceded };
+}
+
+/**
+ * İKİ BİLİM İNSANI tartışması — kullanıcının üst-tasarımı. Müfettiş bağımsız inceler; bayrak
+ * kaldırırsa sınırlı tur boyunca orkestratörle KANITLA tartışır; biri gerçekten teslim olur ya da
+ * çözülmez/yüksek-risk → insana. "Anlaşma" yüksek-riskte tek başına güvenli sayılmaz.
+ */
+export async function runScientistsDebate(
+  config: MyclConfig,
+  ctx: InspectorContext,
+): Promise<DebateOutcome> {
+  let verdict = await runInspectorPass(ctx);
+  let rounds = 0;
+
+  // Müfettiş baştan katıldı:
+  if (verdict.stance === "agree") {
+    if (ctx.highStakes) {
+      // Anlaşmak en büyük tehlike: yüksek-riskte kanıtsız anlaşma → yine insana.
+      return {
+        resolution: "escalate",
+        rounds,
+        finalVerdict: verdict,
+        summary: `Yüksek-risk + müfettiş katıldı ama anlaşma tek başına güvenli değil → insana. Gerekçe: ${verdict.reason}`,
+      };
+    }
+    return { resolution: "agree", rounds, finalVerdict: verdict, summary: verdict.reason };
+  }
+  if (verdict.stance === "escalate") {
+    return { resolution: "escalate", rounds, finalVerdict: verdict, summary: verdict.reason };
+  }
+
+  // Müfettiş BAYRAK kaldırdı → sınırlı, kanıt-temelli tartışma.
+  while (rounds < MAX_DEBATE_ROUNDS) {
+    rounds++;
+    const defense = await runOrchestratorDefense(config, ctx, verdict);
+    if (defense.conceded) {
+      return {
+        resolution: "orchestrator-conceded",
+        rounds,
+        finalVerdict: verdict,
+        summary: `Orkestratör kanıta teslim oldu → müfettişin yolu. ${verdict.reason}`,
+      };
+    }
+    // Müfettiş, savunmaya karşı YENİDEN değerlendirir (çerçeveyi özümsemeden).
+    verdict = await runInspectorPass(ctx, defense.text);
+    if (verdict.stance === "agree") {
+      return {
+        resolution: "inspector-conceded",
+        rounds,
+        finalVerdict: verdict,
+        summary: `Müfettiş kanıta teslim oldu → orkestratörün yolu. ${verdict.reason}`,
+      };
+    }
+    if (verdict.stance === "escalate") {
+      return { resolution: "escalate", rounds, finalVerdict: verdict, summary: verdict.reason };
+    }
+    // hâlâ flag → bir tur daha (kanıt derinleşir).
+  }
+
+  // Tavan aşıldı, çözülmedi → insana (mekanik devre-kesici; doğal-uzunluğu LOGLA).
+  log.info("inspector", "tartışma tavanı aşıldı → escalate", { rounds });
+  return {
+    resolution: "escalate",
+    rounds,
+    finalVerdict: verdict,
+    summary: `Tartışma ${rounds} turda çözülmedi → insana. Son müfettiş gerekçesi: ${verdict.reason}`,
+  };
+}
+
+export interface CheckpointResult {
+  /** Müfettiş gerçekten devreye girdi mi (decideIntervention "none" değil mi). */
+  acted: boolean;
+  decision: InterventionDecision;
+  /** "debate" → DebateOutcome; "flag" → tek-geçiş InspectorVerdict; "none" → undefined. */
+  outcome?: DebateOutcome | InspectorVerdict;
+  /** Yüksek-risk konu mu (güvenlik/veri/geri-alınamaz). mahkemeRuling: yüksek-riskte oto-suppress YOK → insana. */
+  highStakes?: boolean;
+}
+
+/**
+ * KÖPRÜ: müdahale-seçimi → müfettiş. Orkestratör checkpoint'inden çağrılır (AŞAMA 2/b, flag-arkası).
+ * Sinyaller "none" derse müfettiş hiç koşmaz (sus). "flag" → ucuz tek-geçiş; "debate" → tam tartışma.
+ */
+export async function runInspectorCheckpoint(
+  config: MyclConfig,
+  ctx: InspectorContext,
+  signals: InterventionSignals,
+): Promise<CheckpointResult> {
+  const decision = decideIntervention(signals);
+  if (decision.level === "none") return { acted: false, decision, highStakes: ctx.highStakes };
+  if (decision.level === "flag") {
+    const verdict = await runInspectorPass(ctx);
+    return { acted: true, decision, outcome: verdict, highStakes: ctx.highStakes };
+  }
+  const outcome = await runScientistsDebate(config, ctx);
+  return { acted: true, decision, outcome, highStakes: ctx.highStakes };
+}
+
+/**
+ * Gate-bulgusu incelemesi (AŞAMA 2/c ilk insertion). Bir gate fail olunca, MyCL "düzeltmek" üzere
+ * iken müfettiş bulguyu inceler: GERÇEK kod sorunu mu, yoksa false-positive mi (framework-convention /
+ * i18n-etiketi / sezgisel-yanlış — Faz 8 i18n & Faz 11 ts-prune stall sınıfı). isGateFix yumuşak
+ * sinyali + severity (güvenlik→high) müdahale-seçimini sürer. ŞİMDİLİK gözlem (caller akışı değiştirmez).
+ */
+export async function inspectGateFinding(
+  config: MyclConfig,
+  opts: { projectRoot: string; gateLabel: string; errors: string; intent?: string },
+): Promise<CheckpointResult> {
+  const highStakes = /güvenlik|security|secret|credential|csp|injection|auth/i.test(
+    `${opts.gateLabel} ${opts.errors}`,
+  );
+  const ctx: InspectorContext = {
+    intent: opts.intent ?? "Kod-kalite/gate incelemesi — amaç çalışan, kaliteli, sıfır-gerçek-borç kod.",
+    trajectory: `"${opts.gateLabel}" gate'i başarısız; MyCL bildirilen bulguları "düzeltmek" üzere.`,
+    outcomes: opts.errors.slice(0, 4000),
+    decision: `MyCL şu "${opts.gateLabel}" gate bulgularını düzeltecek. Bunlar GERÇEK kod sorunu mu, yoksa false-positive mi (framework-convention export'u, i18n metin-etiketi, sezgisel-tarayıcı yanlışı)? Bizzat dosyaları okuyup DOĞRULA, sonra sınıfla.`,
+    highStakes,
+    projectRoot: opts.projectRoot,
+  };
+  const signals: InterventionSignals = {
+    isStuck: false,
+    isLoop: false,
+    noProgress: false,
+    highStakesAction: false,
+    isGateFix: true, // yumuşak sinyal: bir bulgu "düzeltilmek" üzere → false-positive riski
+    severity: highStakes ? "high" : "medium",
+  };
+  return runInspectorCheckpoint(config, ctx, signals);
+}
+
+/** CheckpointResult'ı insan-okunur tek satıra çevir (gözlem mesajı için). */
+export function formatCheckpoint(r: CheckpointResult): string {
+  if (!r.acted || !r.outcome) return `sus (${r.decision.reason})`;
+  if ("resolution" in r.outcome) {
+    return `tartışma → ${r.outcome.resolution} (${r.outcome.rounds} tur): ${r.outcome.summary}`;
+  }
+  return `${r.outcome.stance}: ${r.outcome.reason}`;
+}
+
+/** Mahkemenin BAĞLAYICI hükmü → caller akışını değiştirir (gözlem değil). */
+export type MahkemeAction = "proceed" | "suppress" | "escalate";
+export interface MahkemeRuling {
+  /** proceed: karar/fix doğru → normal akış. suppress: false-positive KANITLANDI → fix'i uygulama.
+   *  escalate: kuşku/yüksek-risk/kanıtsız → İNSANA. */
+  action: MahkemeAction;
+  /** Mahkeme gerçekten toplandı mı (decideIntervention "none" ise false → caller varsayılan akış). */
+  convened: boolean;
+  /** İnsan-okunur özet (chat / askq için). */
+  summary: string;
+}
+
+/**
+ * Mahkeme hükmü: CheckpointResult → bağlayıcı eylem. GÜVENLİ eşleme (kullanıcı: "mahkeme şart",
+ * orkestratör kutsal): SUPPRESS yalnız TAM-TARTIŞMA sonrası orkestratör-teslim (en güçlü false-positive
+ * sinyali — iki bilim insanı da kanıtla hemfikir). Tek-geçiş "flag" (tartışmasız) → ASLA suppress,
+ * escalate (insana); kuşku/yüksek-risk/escalate → insana; gerçek bulgu/anlaşma → proceed.
+ */
+export function mahkemeRuling(r: CheckpointResult): MahkemeRuling {
+  if (!r.acted || !r.outcome) {
+    return { action: "proceed", convened: false, summary: `sus (${r.decision.reason})` };
+  }
+  if ("resolution" in r.outcome) {
+    const o = r.outcome;
+    switch (o.resolution) {
+      case "orchestrator-conceded": // tartışma sonrası orkestratör teslim → fix yanlış/false-positive
+        // YZLLM kuralı (feedback_gate_findings_never_assume): güvenlik/yüksek-risk ASLA oto-suppress
+        // edilmez (sessiz-gömme = beter) → suppress yerine İNSANA. Yalnız düşük-riskte oto-suppress.
+        return r.highStakes
+          ? { action: "escalate", convened: true, summary: `[yüksek-risk → oto-suppress YOK, insana] ${o.summary}` }
+          : { action: "suppress", convened: true, summary: o.summary };
+      case "escalate":
+        return { action: "escalate", convened: true, summary: o.summary };
+      case "agree": // müfettiş baştan katıldı (yüksek-risk değil) → karar doğru
+      case "inspector-conceded": // müfettiş teslim → orkestratörün yolu doğru
+        return { action: "proceed", convened: true, summary: o.summary };
+    }
+  }
+  // Tek-geçiş verdict (tartışma YOK): agree→proceed; flag/escalate→insana (tartışmasız suppress YOK).
+  const v = r.outcome;
+  if (v.stance === "agree") return { action: "proceed", convened: true, summary: v.reason };
+  return { action: "escalate", convened: true, summary: v.reason };
+}

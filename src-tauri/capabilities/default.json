@@ -1,0 +1,19 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "MyCL Studio capability seti — LEAST-PRIVILEGE (v15.14). Yalnız frontend'in GERÇEKTEN çağırdığı izinler verilir (kaynak doğrulandı): dialog→sadece open (Splash dosya seçici); opener→open-url + default-urls scope (ChatPanel openUrl, http/https localhost dev linkleri); notification→sadece is-permission-granted (requestPermission/sendNotification Tauri komutu DEĞİL, web Notification API'si → izin gerekmez). core:* Tauri çerçeve tabanı (window/webview/app/path/resources/event) korunur (düşük-hassasiyet, çerçeve gereği). DROP: dialog save/message/ask/confirm, opener open-path/reveal-item-in-dir, notification notify/request-permission/channels/listeners/cancel/get-active vb. (15+ kullanılmayan). windows ['*']: bu tek-app içi multi-window 'mycl-<uuid>' için (Tauri 2.11 glob match etmedi); app dışına çıkmaz.",
+  "windows": ["*"],
+  "permissions": [
+    "core:event:default",
+    "core:window:default",
+    "core:window:allow-start-dragging",
+    "core:webview:default",
+    "core:app:default",
+    "core:path:default",
+    "core:resources:default",
+    "opener:allow-open-url",
+    "opener:allow-default-urls",
+    "dialog:allow-open",
+    "notification:allow-is-permission-granted"
+  ]
+}

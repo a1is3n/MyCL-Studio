@@ -1,0 +1,232 @@
+
+<img width="976" height="1096" alt="MyCL Studio" src="https://github.com/user-attachments/assets/2a471953-4ec7-48c7-9f87-1dc2b893c35b" />
+
+
+Yapay zeka destekli yazılım geliştirme için masaüstü uygulaması. Kullanıcının
+Türkçe niyetini alır, çok fazlı bir pipeline üzerinden çalıştırır ve Claude
+modellerini Anthropic API üzerinden — opsiyonel olarak Claude Code CLI ile —
+kullanarak kod üretir, test eder ve kalite kapılarından geçirir. Arayüz
+Türkçedir; modellere giden tüm istekler İngilizceye çevrilir.
+
+## Bileşenler
+
+- **Frontend** (`src/`) — React 19 + Vite + TypeScript. Sohbet arayüzü, faz
+  durumu, ayarlar ve canlı Claude çıktısı paneli.
+- **Tauri host** (`src-tauri/`) — Rust. Pencereyi açar, orchestrator'ı bir alt
+  process olarak başlatır ve frontend ile orchestrator arasında köprü kurar.
+- **Orchestrator** (`orchestrator/`) — Node + TypeScript. Pipeline'ı yürüten
+  asıl mantık. Tauri tarafından spawn edilir; iletişim stdin/stdout üzerinden
+  satır-bazlı JSON (NDJSON) ile yapılır.
+
+## Üç ajan rolü
+
+Her rolün modeli **Ayarlar ekranından dinamik olarak seçilir** — hesabın
+erişebildiği modeller listelenir, kod içinde sabit model ismi yoktur. Ayarlardan
+ayrıca rol başına backend (Anthropic API / Claude Code CLI / Auto), efor seviyesi
+ve özellik bayrakları yapılandırılır.
+
+- **Orchestrator** — Türkçe çalışır; kullanıcıyla konuşur, hangi fazın
+  çalışacağına ve faz geçişlerine karar verir.
+- **Translator** — Türkçe ↔ İngilizce çeviri yapar (iki yön).
+- **Main (codegen)** — fazların asıl işini İngilizce yapar; yalnızca o anki
+  görevi bilir.
+
+Her role ayrı API anahtarı atanabilir. Anahtarlar proje dışında, platforma özel
+config dizinindeki `secrets.json` içinde saklanır (izinler `0600`; konumlar için
+[Çalıştır](#çalıştır) bölümüne bakın); depoya hiçbir anahtar girmez.
+
+## Pipeline
+
+İki giriş yolu vardır: yeni geliştirme/iterasyon (Faz 1 → 17) ve hata ayıklama
+(Faz 0). Projeye uygun olmayan fazlar atlanır (örn. arayüzü olmayan projede UI
+fazları; HTTP sunmayan — CLI/kütüphane — projede sızma testi). Faz tipleri dört
+ortak controller'a dayanır:
+`qa-askq` (kullanıcıya soru/onay), `production-schema` (şema üreten), `codegen`
+(kod yazan), `mechanical-runner` (komut çalıştıran).
+
+| # | Faz | Tip |
+|---|-----|-----|
+| 0 | Hata Ayıklama (Debug Triage) | codegen |
+| 1 | Niyet Toplama | qa-askq |
+| 2 | Hassasiyet Denetimi | qa-askq |
+| 3 | Mühendislik Brifingi | production-schema |
+| 4 | Spec Yazımı | production-schema |
+| 5 | UI Yapımı | codegen |
+| 6 | UI İnceleme | qa-askq |
+| 7 | Veritabanı Tasarımı | production-schema |
+| 8 | TDD Uygulama | codegen |
+| 9 | Risk İncelemesi | qa-askq |
+| 10 | Lint | mechanical |
+| 11 | Sadeleştirme | mechanical |
+| 12 | Performans | mechanical |
+| 13 | Güvenlik | mechanical |
+| 14 | Birim Testler | mechanical |
+| 15 | Entegrasyon Testleri | mechanical |
+| 16 | E2E Testler (UI varsa) | mechanical |
+| 17 | Sızma Testi / Pentest (web veya API hedefi varsa) | mechanical |
+
+## Codegen backend'leri
+
+Her ajan rolünün backend'i Ayarlar'dan rol başına seçilir:
+
+- **Anthropic API** (SDK) — orchestrator'ın kendi turn döngüsü, kendi araçları
+  (Read/Write/Edit/Bash/Glob/Grep), bash-guard ve path-sandbox ile.
+- **Claude Code CLI** — `claude` komutu kuruluysa o rol bu CLI üzerinden çalışır.
+  Seçili olup `claude` bulunmazsa sessizce düşülmez; görünür hata verilir.
+  `~/.mycl/agent-skills` dizini varsa CLI'a `--plugin-dir` ile bağlanır.
+- **Auto** — CLI ile başlar, abonelik kullanım limiti dolunca API'ye geçer, limit
+  açılınca CLI'a döner.
+
+Karmaşık işlerde Faz 5 birden çok bağımsız tasarım üreten **çok-ajanlı tasarım
+fan-out**'u kullanabilir; birbirinden bağımsız ≥2 modül varsa **Çoklu Ajan
+Seçimi** modülleri izole git worktree'lerinde paralel yazıp ayrı bir adımda
+entegre eder.
+
+## Doğrulama ve güvenlik
+
+- **Dürüst hüküm** — akış sonunda mekanik kapılar ve risk incelemesi tek bir
+  sonuca toplanır: PASS / PARTIAL / FAIL. Araç yokluğundan atlanan boyutlar
+  "doğrulanmadı" diye işaretlenir; patlayan bir kapı sessizce "tamamlandı"
+  sayılmaz (yan menüde ⚠️, başlıkta kısmî/başarısız çip).
+- **Düşman-gözü inceleme** (Faz 9) — bulan ve çürüten ajanlar birlikte çalışır;
+  yanlış-pozitif bulgular elenir, gerçek riskler otomatik düzeltmeye yönlenir.
+- **Mahkeme** (müfettiş ↔ orkestratör) — opsiyonel bağımsız denetim katmanı: bir
+  gate/faz başarısız olup MyCL "düzeltmek" üzereyken, **farklı-aile bir model**
+  (müfettiş) bulguyu kendi vantajından, **bizzat kanıt toplayarak** inceler. İki
+  "bilim insanı" kanıt-temelli tartışır ve sonuç fix kararını **bağlar**:
+  false-positive kanıtlanırsa çalışan kod korunur (düzeltme yapılmaz); kuşku /
+  yüksek-risk / güvenlik insana yükseltilir; gerçek bulgu düzeltmeye gider —
+  müfettişin bağımsız analizi düzeltmeyi besler.
+  Yetki fix-kararları üzerinde evrenseldir (küçük değişiklik de incelenir), ama
+  orkestratörün çalışan akışı asla zorla kesilmez. Varsayılan **açık** (Ayarlar →
+  müfettiş'ten kapatılabilir).
+- **Sızma testi / DAST** — `katana` (gezinme) + `nuclei` ile çalışan uygulama
+  aktif taranır (Faz 17 ve **🛡️ Güvenlik Taraması** butonu). Bulgular
+  önceliklenip otomatik düzeltme iterasyonlarına (Faz 3'ten) dönüşür.
+- **Denetim Ajanı** (**🕵️**) — kullanıcının sorularıyla MyCL kendi çıktısını
+  denetler; bir bulgunun MyCL'in kendi sorunu mu yoksa üretilen proje mi
+  olduğunu ayırır.
+
+## Stack profilleri
+
+Proje tek bir dile bağlı değil. Manifest dosyalarından (`package.json`,
+`pyproject.toml`, `Cargo.toml`, `go.mod` vb.) projenin stack'i tespit edilir ve
+[assets/profiles/](assets/profiles/) altındaki eşleşen profil seçilir. Bir profil,
+stack'i komutlara (lint / test / build / performans), dev-server portuna ve
+manifest dosyalarına eşler — mekanik fazlar (10–17) bu stack-özel komutları
+çalıştırır.
+
+Mevcut **18 stack profili**: Node (npm, yarn, pnpm, bun), Python (pip, poetry, uv),
+Rust, Go, Ruby, PHP, .NET, Dart, Elixir, Swift, Maven, Gradle, Deno. Ayrıca proje
+**tipi** (web / cli / library / api / ml / game / desktop / mobile) sınıflandırılır;
+bu, hangi test fazlarının (E2E, sızma testi) uygulanacağını belirler.
+
+## Hata kataloğu
+
+MyCL'in geliştirdiği her proje bir SQLite `mycl_errors.db` ile gelir. Çalışma
+zamanındaki hatalar (backend hata middleware'i + frontend `ErrorBoundary` / fetch
+sarmalayıcısı) kod, konum ve Türkçe açıklamayla kaydedilir; proje içinde bir
+"Hata Kodları" sayfası bunları listeler. Faz 0 (Hata Ayıklama) araştırmaya
+başlarken bu `mycl_errors.db`'yi okuyarak kök nedene daha hızlı ulaşır.
+
+## Resimli kullanım kılavuzu
+
+Bir projeyi geliştirirken MyCL, o proje için **ekran görüntülü Türkçe bir kullanım
+kılavuzu** hazırlar: çalışan uygulamayı Playwright (headless Chromium) ile gezip
+ilgili adımların ekran görüntülerini alır. Kılavuz **üretilen projenin içine**
+gömülür — her sayfadaki bir **"?" popup'ından** açılır; tarihlidir ve içerik
+değiştikçe bayatlayan görüntüler temizlenip yenilenir. Ayrıca MyCL Studio'da
+projeye dair Türkçe bir teknik döküman ("Proje Dökümanı") gösterilir.
+
+## Güvenlik sınırları
+
+- **bash-guard** — yıkıcı komutlar (`rm -rf`, `sudo`, force push vb.) reddedilir.
+- **path-sandbox** — dosya işlemleri seçilen proje köküyle sınırlıdır.
+- **safe-env** — alt process'lere yalnızca izinli ortam değişkenleri geçer; API
+  anahtarları ve token'lar sızdırılmaz.
+- **redaction** — loglarda `sk-ant-…` desenleri ve anahtar alanları maskelenir.
+
+## Geliştirme
+
+### Hızlı kurulum (tek komut)
+
+Kopyala/clone → **tek komut**, bilgisayarda olmayan her şeyi kurar (Homebrew, Node ≥22, Rust,
+Tauri sistem bağımlılıkları, güvenlik araçları `nuclei`/`katana`/`semgrep`/`gitleaks`, Chromium).
+macOS + Linux, idempotent (kuruluyu atlar); bazı adımlar şifre isteyebilir:
+
+```bash
+bash setup.sh          # veya: npm run setup
+```
+
+Sonra başlat:
+
+```bash
+npm run tauri dev      # ilk açılışta API anahtarları + model seçimi sorulur
+```
+
+**API anahtarları repoya GİRMEZ** — platforma göre `~/.mycl/secrets.json` (macOS) /
+`~/.config/mycl/secrets.json` (Linux) içinde, izinler `0600`. Anahtarları girince bir proje
+klasörü seçilir ve pipeline başlar. (Windows kapsam dışı.)
+
+### Build
+
+```bash
+npm run build:all      # orchestrator (tsc) + frontend (tsc && vite build)
+npm run tauri build    # masaüstü uygulama paketi
+npm run desktop-icon   # paketten sonra: masaüstüne kısayol/ikon koy (mac .app / linux .desktop)
+```
+
+### Test
+
+Tek doğruluk kaynağı `npm run check` ([scripts/check.sh](scripts/check.sh)):
+build + test + frontend tip kontrolü + sızıntı taraması + eski-iddia taraması +
+custom semgrep kuralları. Her anlamlı değişiklikten sonra koşulur; aynı betik CI'da
+da çalışır ([.github/workflows/check.yml](.github/workflows/check.yml)).
+
+```bash
+npm run check                         # hepsi (önerilen)
+
+# Tek tek:
+npm --prefix orchestrator test        # vitest (1300+ test)
+npm --prefix orchestrator run build   # orchestrator tsc, hata yok
+npx tsc --noEmit                      # frontend tip kontrolü
+```
+
+## Proje düzeni
+
+```
+src/                  # React frontend (components, hooks, types, utils)
+src-tauri/            # Rust Tauri host
+orchestrator/
+  src/
+    base/             # 4 ortak controller (qa-askq, production-schema,
+                      #   codegen, mechanical-runner)
+    codegen/          # backend soyutlaması: SDK + CLI (backend.ts, cli-backend.ts)
+    orchestrator-agent/  # karar ajanı (agent, decision, tools, path-sandbox)
+    intent-router/    # kullanıcı mesajını eyleme yönlendirme
+    relevance/        # bağlam seçimi / chunk store
+    agent-memory/     # iterasyonlar arası kalıcı not
+    task-queue/       # görev kuyruğu
+    phase-0..9.ts     # LLM fazlarının controller'ları
+    phase-registry.ts # faz tanımları (PhaseSpec)
+    claude-api.ts     # Anthropic SDK sarmalayıcı (prompt caching dahil)
+    translator.ts     # TR↔EN çeviri
+    tool-handlers.ts  # Read/Write/Edit/Bash/Glob/Grep yürütücüleri
+    bash-guard.ts     # yıkıcı komut denylist
+    safe-env.ts       # alt process env allowlist
+    profile-loader.ts # stack profili yükleme + tespit
+    errors-db.ts      # proje hata kataloğu (mycl_errors.db)
+    config.ts         # ~/.mycl/secrets.json + seçili modeller + bayraklar
+    ...
+  test/               # vitest dosyaları
+assets/
+  templates/          # faz başına İngilizce system prompt şablonları
+  agent-prompts/      # orchestrator system prompt
+  profiles/           # 18 stack profili (komut + port + manifest eşlemesi)
+  i18n/               # tr.json + en.json
+  security-rules/     # güvenlik kuralları
+```
+
+## Lisans
+
+Özel proje — YZLLM.

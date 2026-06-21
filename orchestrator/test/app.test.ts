@@ -1,0 +1,55 @@
+import { describe, expect, it, vi } from "vitest";
+import { App, type AppDeps } from "../src/app.js";
+
+describe("App composition root (v15.1)", () => {
+  it("calls loadI18n, startRuntimeHttpServer, emitConfigStatus on start", async () => {
+    // stdin/exit/signal side-effect'leri test çevresinde tehlikeli — start()'ı
+    // ASYNC olarak başlat, kısa bekle (stdin loop oturmadan deps callable'lara
+    // bakacağız), readline asla "line" emit etmeyecek (test stdin sessiz).
+    const deps: AppDeps = {
+      loadI18n: vi.fn().mockResolvedValue(undefined),
+      startRuntimeHttpServer: vi.fn(),
+      emitConfigStatus: vi.fn().mockResolvedValue(true),
+      dispatch: vi.fn().mockResolvedValue(undefined),
+      // AppDeps ZORUNLU alanı. start() rl.on("close")/SIGTERM/SIGINT'te bunu çağırır; CI'da stdin
+      // non-interaktif → EOF → rl "close" → eksikse "gracefulShutdown is not a function" uncaughtException
+      // worker'ı çökertir (aynı worker'daki pipeline-e2e dahil DÜŞER). No-op mock (gerçek => process.exit).
+      gracefulShutdown: vi.fn() as unknown as AppDeps["gracefulShutdown"],
+    };
+    const app = new App(deps);
+    // start() readline.on("close") ile process.exit(0) çağıracağı için void promise
+    // (beklemiyoruz; stdin loop oturmaz). Boot async → SABİT tick yerine vi.waitFor
+    // ile deterministik bekle (2 setTimeout(0) bazen boot adımlarına yetişmiyordu → flaky).
+    void app.start();
+    await vi.waitFor(
+      () => {
+        expect(deps.loadI18n).toHaveBeenCalledTimes(1);
+        expect(deps.startRuntimeHttpServer).toHaveBeenCalledTimes(1);
+        expect(deps.emitConfigStatus).toHaveBeenCalledTimes(1);
+      },
+      { timeout: 2000, interval: 10 },
+    );
+  });
+
+  it("continues boot when loadI18n throws (emits config_status fail-soft)", async () => {
+    // i18n load fail → start() throw etmemeli, sadece error event emit etmeli.
+    // Runtime HTTP ve dispatch hâlâ ulaşılabilir.
+    const deps: AppDeps = {
+      loadI18n: vi.fn().mockRejectedValue(new Error("bundle missing")),
+      startRuntimeHttpServer: vi.fn(),
+      emitConfigStatus: vi.fn().mockResolvedValue(false),
+      dispatch: vi.fn(),
+      gracefulShutdown: vi.fn() as unknown as AppDeps["gracefulShutdown"], // bkz. yukarıdaki not (CI stdin EOF)
+    };
+    const app = new App(deps);
+    void app.start();
+    await vi.waitFor(
+      () => {
+        expect(deps.loadI18n).toHaveBeenCalled();
+        // i18n fail olsa bile startRuntimeHttpServer çağrılır (boot devam eder)
+        expect(deps.startRuntimeHttpServer).toHaveBeenCalled();
+      },
+      { timeout: 2000, interval: 10 },
+    );
+  });
+});
