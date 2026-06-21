@@ -714,6 +714,11 @@ select:focus {
   flex: 1;
   display: grid;
   grid-template-columns: 200px 1px 1fr 1px 1fr auto;
+  /* Tek satırı container yüksekliğine BAĞLA (minmax(0,1fr)): tanımsızken implicit
+     `auto` satır içeriğe (chat+composer) göre büyüyüp overflow:hidden'ı aşıyor →
+     composer'ın altı kırpılıyordu. Bağlı satır → .panel bounded → .chat-messages
+     flex:1 daralır (kendi içinde scroll), composer her zaman TAM görünür. */
+  grid-template-rows: minmax(0, 1fr);
   min-height: 0;
   overflow: hidden;
 }
