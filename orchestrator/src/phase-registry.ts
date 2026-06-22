@@ -276,11 +276,15 @@ export const PHASE_SPECS: Partial<Record<PhaseId, PhaseSpec>> = {
       // mühendislik kuralları (yutulan hata, debug artığı, ts-suppress kaçağı). Faz 10
       // (Lint) semantik yuva. Bozuk kural/araç-crash (exit 2) → fail DEĞİL skip
       // (tool_error_codes). scoped: changedScope doluysa yalnız değişen dosyalara koşar.
+      // CANLI-BUG (2026-06-22, Arcelik_BO): semgrep ÜRETİLEN build çıktısını (`.next/` webpack
+      // bundle'ları, dist/build/out, vendored kod) tarayıp false-positive üretip pipeline'ı
+      // tıkıyordu (kaynakta 0, .next'te 17). Stack-bağımsız build-dir exclude'ları eklendi —
+      // SADECE kaynak taranır (semgrep .next'i default'ta ELEMEZ; node_modules'u eler).
       extra_scans: [
         {
           name: "code-quality",
-          cmd: `semgrep --config "${qualityRulePath("code-quality.yml")}" . --exclude='mycl-audit*' --error --quiet`,
-          scoped_cmd_template: `semgrep --config "${qualityRulePath("code-quality.yml")}" {files} --exclude='mycl-audit*' --error --quiet`,
+          cmd: `semgrep --config "${qualityRulePath("code-quality.yml")}" . --exclude='mycl-audit*' --exclude='.next' --exclude='dist' --exclude='build' --exclude='out' --exclude='coverage' --exclude='.turbo' --exclude='.svelte-kit' --exclude='.nuxt' --exclude='node_modules' --exclude='vendor' --exclude='target' --error --quiet`,
+          scoped_cmd_template: `semgrep --config "${qualityRulePath("code-quality.yml")}" {files} --exclude='mycl-audit*' --exclude='.next' --exclude='dist' --exclude='build' --exclude='out' --exclude='coverage' --exclude='.turbo' --exclude='.svelte-kit' --exclude='.nuxt' --exclude='node_modules' --exclude='vendor' --exclude='target' --error --quiet`,
           // semgrep araç/kural sorunu → fail DEĞİL skip: 2=fatal/bozuk-kural(validate) +
           // bozuk-tarama-root, 7=runtime invalid-rule (düşman-gözü K3-A: tarama modunda
           // bozuk kural 2 değil 7 verir). Gerçek bulgu=1 → fail (skip değil).
@@ -363,8 +367,8 @@ export const PHASE_SPECS: Partial<Record<PhaseId, PhaseSpec>> = {
           // config, path sorunu yok), dil-agnostik, gitleaks'in sürüm/komut/scope
           // kırılganlığı yok. Eksik→skip, semgrep-crash (exit 2)→skip (tool_error_codes).
           name: "semgrep-secrets",
-          cmd: "semgrep --config p/secrets . --exclude='mycl-audit*' --error --quiet",
-          scoped_cmd_template: "semgrep --config p/secrets {files} --exclude='mycl-audit*' --error --quiet",
+          cmd: "semgrep --config p/secrets . --exclude='mycl-audit*' --exclude='.next' --exclude='dist' --exclude='build' --exclude='out' --exclude='coverage' --exclude='.turbo' --exclude='.svelte-kit' --exclude='.nuxt' --exclude='node_modules' --exclude='vendor' --exclude='target' --error --quiet",
+          scoped_cmd_template: "semgrep --config p/secrets {files} --exclude='mycl-audit*' --exclude='.next' --exclude='dist' --exclude='build' --exclude='out' --exclude='coverage' --exclude='.turbo' --exclude='.svelte-kit' --exclude='.nuxt' --exclude='node_modules' --exclude='vendor' --exclude='target' --error --quiet",
           tool_error_codes: [2],
         },
         // tool_error_codes:[2]: semgrep fatal/crash (registry fetch hatası, bozuk hedef
@@ -372,20 +376,20 @@ export const PHASE_SPECS: Partial<Record<PhaseId, PhaseSpec>> = {
         // (Unit 3 robustness; review landmine). exit 1 (gerçek bulgu) blocking kalır.
         {
           name: "semgrep",
-          cmd: "semgrep --config auto . --exclude='mycl-audit*' --error --quiet",
-          scoped_cmd_template: "semgrep --config auto {files} --exclude='mycl-audit*' --error --quiet",
+          cmd: "semgrep --config auto . --exclude='mycl-audit*' --exclude='.next' --exclude='dist' --exclude='build' --exclude='out' --exclude='coverage' --exclude='.turbo' --exclude='.svelte-kit' --exclude='.nuxt' --exclude='node_modules' --exclude='vendor' --exclude='target' --error --quiet",
+          scoped_cmd_template: "semgrep --config auto {files} --exclude='mycl-audit*' --exclude='.next' --exclude='dist' --exclude='build' --exclude='out' --exclude='coverage' --exclude='.turbo' --exclude='.svelte-kit' --exclude='.nuxt' --exclude='node_modules' --exclude='vendor' --exclude='target' --error --quiet",
           tool_error_codes: [2],
         },
         {
           name: "semgrep-security-audit",
-          cmd: "semgrep --config p/security-audit . --exclude='mycl-audit*' --error --quiet",
-          scoped_cmd_template: "semgrep --config p/security-audit {files} --exclude='mycl-audit*' --error --quiet",
+          cmd: "semgrep --config p/security-audit . --exclude='mycl-audit*' --exclude='.next' --exclude='dist' --exclude='build' --exclude='out' --exclude='coverage' --exclude='.turbo' --exclude='.svelte-kit' --exclude='.nuxt' --exclude='node_modules' --exclude='vendor' --exclude='target' --error --quiet",
+          scoped_cmd_template: "semgrep --config p/security-audit {files} --exclude='mycl-audit*' --exclude='.next' --exclude='dist' --exclude='build' --exclude='out' --exclude='coverage' --exclude='.turbo' --exclude='.svelte-kit' --exclude='.nuxt' --exclude='node_modules' --exclude='vendor' --exclude='target' --error --quiet",
           tool_error_codes: [2],
         },
         {
           name: "semgrep-owasp-top-ten",
-          cmd: "semgrep --config p/owasp-top-ten . --exclude='mycl-audit*' --error --quiet",
-          scoped_cmd_template: "semgrep --config p/owasp-top-ten {files} --exclude='mycl-audit*' --error --quiet",
+          cmd: "semgrep --config p/owasp-top-ten . --exclude='mycl-audit*' --exclude='.next' --exclude='dist' --exclude='build' --exclude='out' --exclude='coverage' --exclude='.turbo' --exclude='.svelte-kit' --exclude='.nuxt' --exclude='node_modules' --exclude='vendor' --exclude='target' --error --quiet",
+          scoped_cmd_template: "semgrep --config p/owasp-top-ten {files} --exclude='mycl-audit*' --exclude='.next' --exclude='dist' --exclude='build' --exclude='out' --exclude='coverage' --exclude='.turbo' --exclude='.svelte-kit' --exclude='.nuxt' --exclude='node_modules' --exclude='vendor' --exclude='target' --error --quiet",
           tool_error_codes: [2],
         },
         {
@@ -401,16 +405,16 @@ export const PHASE_SPECS: Partial<Record<PhaseId, PhaseSpec>> = {
           // tehlikeli sink'lere (innerHTML/dangerouslySetInnerHTML/eval/SQL-concat) akıyor mu.
           // Custom semgrep YAML (mutlak yol); bozuk/fatal kural exit 2 → skip (yanlış-blocking yok).
           name: "data-sanitization",
-          cmd: `semgrep --config "${securityRulePath("data-sanitization.yml")}" . --exclude='mycl-audit*' --error --quiet`,
-          scoped_cmd_template: `semgrep --config "${securityRulePath("data-sanitization.yml")}" {files} --exclude='mycl-audit*' --error --quiet`,
+          cmd: `semgrep --config "${securityRulePath("data-sanitization.yml")}" . --exclude='mycl-audit*' --exclude='.next' --exclude='dist' --exclude='build' --exclude='out' --exclude='coverage' --exclude='.turbo' --exclude='.svelte-kit' --exclude='.nuxt' --exclude='node_modules' --exclude='vendor' --exclude='target' --error --quiet`,
+          scoped_cmd_template: `semgrep --config "${securityRulePath("data-sanitization.yml")}" {files} --exclude='mycl-audit*' --exclude='.next' --exclude='dist' --exclude='build' --exclude='out' --exclude='coverage' --exclude='.turbo' --exclude='.svelte-kit' --exclude='.nuxt' --exclude='node_modules' --exclude='vendor' --exclude='target' --error --quiet`,
           tool_error_codes: [2],
         },
         {
           // Web güvenliği: CORS yanlış-yapılandırma (* origin) + güvensiz cookie
           // (httpOnly/secure/sameSite — XSS/transport/CSRF). Custom semgrep (mutlak yol).
           name: "web-security",
-          cmd: `semgrep --config "${securityRulePath("web-security.yml")}" . --exclude='mycl-audit*' --error --quiet`,
-          scoped_cmd_template: `semgrep --config "${securityRulePath("web-security.yml")}" {files} --exclude='mycl-audit*' --error --quiet`,
+          cmd: `semgrep --config "${securityRulePath("web-security.yml")}" . --exclude='mycl-audit*' --exclude='.next' --exclude='dist' --exclude='build' --exclude='out' --exclude='coverage' --exclude='.turbo' --exclude='.svelte-kit' --exclude='.nuxt' --exclude='node_modules' --exclude='vendor' --exclude='target' --error --quiet`,
+          scoped_cmd_template: `semgrep --config "${securityRulePath("web-security.yml")}" {files} --exclude='mycl-audit*' --exclude='.next' --exclude='dist' --exclude='build' --exclude='out' --exclude='coverage' --exclude='.turbo' --exclude='.svelte-kit' --exclude='.nuxt' --exclude='node_modules' --exclude='vendor' --exclude='target' --error --quiet`,
           tool_error_codes: [2],
         },
         {

@@ -42,7 +42,10 @@ function runOne(config: string, cwd: string): Promise<ScanOutcome> {
     };
     let child: ReturnType<typeof spawn>;
     try {
-      child = spawn(`semgrep --config ${config} . --quiet --error --metrics=off`, {
+      // CANLI-BUG (2026-06-22): semgrep ÜRETİLEN build çıktısını (.next/dist/build vendored) tarayıp
+      // false-positive üretiyordu. node_modules/.git semgrep'çe auto-skip ama .next vb. DEĞİL → açıkça ele
+      // (stack-bağımsız build-dir listesi; phase-registry.ts kod-kalite/güvenlik taramalarıyla aynı set).
+      child = spawn(`semgrep --config ${config} . --exclude='.next' --exclude='dist' --exclude='build' --exclude='out' --exclude='coverage' --exclude='.turbo' --exclude='.svelte-kit' --exclude='.nuxt' --exclude='node_modules' --exclude='vendor' --exclude='target' --exclude='mycl-audit*' --quiet --error --metrics=off`, {
         cwd,
         shell: true,
         env: { ...safeEnv(), LC_ALL: "C" },
