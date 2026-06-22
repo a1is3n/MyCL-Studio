@@ -9,6 +9,13 @@ import {
   type MyclConfig,
   type ApiKeys,
 } from "../src/config.js";
+import {
+  findModel,
+  glmModelForTier,
+  catalogForProvider,
+  GLM_CATALOG,
+  MODEL_CATALOG,
+} from "../src/model-catalog.js";
 
 function cfg(backend: string, keys: Partial<ApiKeys>): MyclConfig {
   return {
@@ -70,5 +77,30 @@ describe("zaiKeyForRole (per-rol > default)", () => {
     expect(zaiKeyForRole(keys, "main")).toBe("def");
     expect(zaiKeyForRole(keys, "orchestrator")).toBe("def");
     expect(zaiKeyForRole({} as ApiKeys, "main")).toBeUndefined();
+  });
+});
+
+describe("GLM katalog (provider-aware model — ②)", () => {
+  it("findModel GLM id'lerini tanır (sessiz claude-default landmine yok); claude'u da bulur", () => {
+    expect(findModel("glm-5.2")?.tier).toBe("strong");
+    expect(findModel("glm-4-flash")?.tier).toBe("cheap");
+    expect(findModel("claude-opus-4-8")?.tier).toBe("strong");
+    expect(findModel("yok-böyle-model")).toBeUndefined();
+  });
+
+  it("glmModelForTier her tier'dan GLM döner (glm- prefix + doğru tier)", () => {
+    for (const tier of ["cheap", "balanced", "strong"] as const) {
+      const id = glmModelForTier(tier);
+      expect(id.startsWith("glm-")).toBe(true);
+      expect(findModel(id)?.tier).toBe(tier);
+    }
+  });
+
+  it("catalogForProvider: isZai → GLM, değilse Claude; GLM her tier'ı kapsar (fallback'e düşmez)", () => {
+    expect(catalogForProvider(true)).toBe(GLM_CATALOG);
+    expect(catalogForProvider(false)).toBe(MODEL_CATALOG);
+    for (const tier of ["cheap", "balanced", "strong"] as const) {
+      expect(GLM_CATALOG.some((m) => m.tier === tier)).toBe(true);
+    }
   });
 });
