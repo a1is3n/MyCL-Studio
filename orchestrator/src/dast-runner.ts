@@ -363,12 +363,23 @@ const SIGKILL_GRACE_MS = 5_000;
  * (2) GRACE sonra SIGKILL (yakalanamaz) + `close`'u BEKLEMEDEN Promise'i ZORLA çöz.
  * `settled` guard → ikinci resolve no-op. Böylece dönüş timeoutMs+grace ile SINIRLI.
  */
+type SpawnCappedResult = {
+  stdout: string;
+  timedOut: boolean;
+  spawnError?: Error;
+  // YZLLM 2026-06-23 (sessiz-fallback denetimi): stderr + exitCode YAKALANIR. Eskiden ikisi de yutuluyordu →
+  // araç HATA verip (exit!=0, stderr dolu, stdout boş) "0 bulgu = temiz" sanılıyordu (false-clean güvenlik taraması).
+  stderr: string;
+  exitCode?: number | null;
+  exitSignal?: NodeJS.Signals | null;
+};
+
 function spawnCapped(
   bin: string,
   args: string[],
   cwd: string,
   timeoutMs: number,
-): Promise<{ stdout: string; timedOut: boolean; spawnError?: Error }> {
+): Promise<SpawnCappedResult> {
   return new Promise((resolve) => {
     let child: ReturnType<typeof spawn>;
     try {
@@ -379,19 +390,17 @@ function spawnCapped(
         stdio: ["ignore", "pipe", "pipe"],
       });
     } catch (e) {
-      resolve({ stdout: "", timedOut: false, spawnError: e as Error });
+      resolve({ stdout: "", timedOut: false, spawnError: e as Error, stderr: "" });
       return;
     }
     let stdout = "";
+    let stderr = "";
     let bytes = 0;
+    let errBytes = 0;
     let timedOut = false;
     let settled = false;
     let killTimer: ReturnType<typeof setTimeout> | undefined;
-    const finish = (r: {
-      stdout: string;
-      timedOut: boolean;
-      spawnError?: Error;
-    }) => {
+    const finish = (r: SpawnCappedResult) => {
       if (settled) return; // idempotent — ilk çözüm kazanır
       settled = true;
       clearTimeout(timer);
@@ -402,8 +411,10 @@ function spawnCapped(
       bytes += d.length;
       if (bytes <= MAX_OUTPUT_BYTES) stdout += d.toString("utf-8");
     });
-    child.stderr?.on("data", () => {
-      /* gürültü — yut; sonuç stdout'ta */
+    child.stderr?.on("data", (d: Buffer) => {
+      // Artık YUTULMAZ — cap'li biriktir; araç-hatasını (exit!=0 + stderr) tool-error ayrımı için consumer kullanır.
+      errBytes += d.length;
+      if (errBytes <= MAX_OUTPUT_BYTES) stderr += d.toString("utf-8");
     });
     const timer = setTimeout(() => {
       timedOut = true;
@@ -422,11 +433,11 @@ function spawnCapped(
             /* zaten ölmüş olabilir */
           }
         }
-        finish({ stdout, timedOut: true }); // ZORLA çöz — hang yok
+        finish({ stdout, timedOut: true, stderr }); // ZORLA çöz — hang yok
       }, SIGKILL_GRACE_MS);
     }, timeoutMs);
-    child.on("error", (e: Error) => finish({ stdout, timedOut, spawnError: e }));
-    child.on("close", () => finish({ stdout, timedOut }));
+    child.on("error", (e: Error) => finish({ stdout, timedOut, spawnError: e, stderr }));
+    child.on("close", (code, signal) => finish({ stdout, timedOut, stderr, exitCode: code, exitSignal: signal }));
   });
 }
 
@@ -439,7 +450,7 @@ function runNucleiCapped(
   input: { kind: "url"; url: string } | { kind: "list"; file: string },
   cwd: string,
   headers: string[] = [],
-): Promise<{ stdout: string; timedOut: boolean; spawnError?: Error }> {
+): Promise<SpawnCappedResult> {
   const inputArgs =
     input.kind === "url" ? ["-u", input.url] : ["-l", input.file];
   const args = [
@@ -476,7 +487,7 @@ function runKatanaCapped(
   url: string,
   cwd: string,
   headers: string[] = [],
-): Promise<{ stdout: string; timedOut: boolean; spawnError?: Error }> {
+): Promise<SpawnCappedResult> {
   const args = [
     ...headers.flatMap((h) => ["-H", h]), // örn. Cookie: mycl_no_autologin=1 (autologin bypass)
     "-u",
@@ -734,7 +745,7 @@ export async function runDast(
   });
   let listFile: string | undefined;
   try {
-    let result: { stdout: string; timedOut: boolean; spawnError?: Error };
+    let result: SpawnCappedResult;
     if (scanUrls.length <= 1) {
       result = await runNucleiCapped({ kind: "url", url: target }, state.project_root, headers);
     } else {
@@ -752,7 +763,7 @@ export async function runDast(
       }
       result = await runNucleiCapped({ kind: "list", file: listFile }, state.project_root, headers);
     }
-    const { stdout, timedOut, spawnError } = result;
+    const { stdout, timedOut, spawnError, stderr, exitCode } = result;
     if (timedOut) {
       const limit = (scanUrls.length > 1 ? DAST_LIST_TIMEOUT_MS : DAST_TIMEOUT_MS) / 1000;
       return {
@@ -772,6 +783,25 @@ export async function runDast(
     // nuclei bulgu bulunca exit kodu !=0 dönebilir — çıktıyı yine PARSE et
     // (semgrep exit-2 dersi: exit kodunu fail sayma, stdout'u oku).
     const summary = parseNucleiJsonl(stdout);
+    // TOOL-ERROR ayrımı (sessiz-fallback denetimi): bulgu varken exit!=0 + stdout'ta JSONL (total>0) gelir.
+    // AMA total==0 + exit!=0 (sayısal) + stderr'de hata imzası = nuclei HATA verdi (template/config/ağ) — temiz
+    // tarama exit 0 dönerdi. "0 bulgu = temiz" SANMA (false-clean güvenlik taraması). Görünür tool-error.
+    if (
+      summary.total === 0 &&
+      typeof exitCode === "number" &&
+      exitCode !== 0 &&
+      /error|failed|panic|cannot|unable|no such|fatal|could not|invalid/i.test(stderr)
+    ) {
+      log.warn("dast-runner", "nuclei tool error (exit!=0, 0 bulgu, stderr-hata) — false-clean önlendi", {
+        exitCode,
+        stderr: stderr.slice(0, 300),
+      });
+      return {
+        ok: false,
+        summary_tr: `❌ Güvenlik taraması aracı (nuclei) HATA verdi (exit ${exitCode}) — "0 bulgu" GÜVENİLİR DEĞİL (tarama tamamlanmadı, temiz değil): ${sanitizeField(stderr, 160)}`,
+        error: "tool_error",
+      };
+    }
     return {
       ok: true,
       findings_count: summary.total,
