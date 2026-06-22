@@ -19,6 +19,7 @@ import {
   readClaudeCodeFlags,
   readFeatures,
   readSelectedModels,
+  zaiKeyForRole,
   type AgentBackends,
   type ApiKeys,
   type ClaudeCodeFlags,
@@ -1440,6 +1441,20 @@ async function handleSaveSelectedModels(
           `• Model → main: ${fresh.selected_models.main}` +
           `${flagsPatch.effort ? ` · efor: ${flagsPatch.effort}` : ""}`,
       );
+      // R1 (adversarial review): Sağlayıcı=Z.AI seçili ama o rolün z.ai key'i yoksa resolveProvider
+      // sessizce claude'a düşer → katı kural #4 ihlali. Seçim-anında GÖRÜNÜR uyar (correct-by-construction;
+      // resolveProvider hot-path olduğu için orada değil, burada — tek doğru yer).
+      const missingZai = (["main", "translator", "orchestrator"] as const).filter(
+        (r) => b?.[r] === "zai" && !zaiKeyForRole(fresh.api_keys, r),
+      );
+      if (missingZai.length > 0) {
+        emitChatMessage(
+          "system",
+          `⚠️ Sağlayıcı=Z.AI seçtiniz ama şu rol(ler)in z.ai key'i girilmemiş: **${missingZai.join(", ")}** → ` +
+            `bu rol(ler) z.ai DEĞİL, güvenli şekilde claude ile koşacak. z.ai'yi etkinleştirmek için ` +
+            `Ayarlar → API Anahtarları'ndan ilgili z.ai key'ini girin.`,
+        );
+      }
     }
   } catch (err) {
     log.error("orchestrator", "save_selected_models failed", err);

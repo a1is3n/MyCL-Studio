@@ -217,9 +217,12 @@ const DEFAULT_FEATURES: FeatureFlags = {
  * `main:"cli"` migration'ı resolveAgentBackends'te yapılır.
  */
 /** Efektif (çözülmüş) backend — dispatch noktalarının tükettiği. "zai" = z.ai/GLM
- *  sağlayıcısı (Anthropic-uyumlu SDK yolu, baseURL=z.ai; CLI'ye env ile de enjekte
- *  edilebilir). Provider AYRI eksen değil — backend'in 3. değeri (api/cli/zai), rol
- *  başına combobox'tan seçilir. "zai" "auto"ya girmez (açık seçim). */
+ *  sağlayıcısı: Anthropic-uyumlu SDK yolu (baseURL=z.ai). Provider AYRI eksen değil —
+ *  backend'in 3. değeri (api/cli/zai), rol başına combobox'tan seçilir. "zai" "auto"ya
+ *  girmez (açık seçim). NOT: backendForRole("zai") "api" döner → provider=zai HER ZAMAN
+ *  SDK yolundan akar; runClaudeCli (forced-CLI siteleri) z.ai'ye env ile YÖNLENDİRİLMİYOR
+ *  (⑥ açık iş — adversarial review B1: visual-design/debate/parallel-codegen provider=zai'de
+ *  hâlâ claude CLI; canlı z.ai key'iyle doğrulanınca eklenecek). */
 export type AgentBackend = "api" | "cli" | "zai";
 /**
  * Yapılandırılmış backend (config'te saklanan). "auto" = Auto Mode: CLI ile başla,
