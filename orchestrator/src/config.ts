@@ -196,6 +196,11 @@ export interface FeatureFlags {
    * müfettiş koşar. DENEYSEL, flag-arkası geliştirme.
    */
   inspector_enabled?: boolean;
+  /**
+   * Faz-Katkı Mahkemesi (YZLLM 2026-06-22): pipeline-end'de her fazın katkı yüzdesini mahkeme değerlendirir →
+   * Türkçe rapor chat'e (kullanıcı gereksiz fazı görüp KENDİ budar). Tek runReasoning çağrısı; varsayılan AÇIK.
+   */
+  phase_contribution_report?: boolean;
 }
 
 const DEFAULT_FEATURES: FeatureFlags = {
@@ -207,6 +212,7 @@ const DEFAULT_FEATURES: FeatureFlags = {
   // varsayılan AÇIK (Ayarlar'dan kapatılabilir). Test config'leri inspector_enabled'ı kendileri
   // ayarlar (DEFAULT_FEATURES spread etmeyenler etkilenmez); gate/fix yollarındaki çağrı flag-arkası.
   inspector_enabled: true,
+  phase_contribution_report: true,
 };
 
 /**

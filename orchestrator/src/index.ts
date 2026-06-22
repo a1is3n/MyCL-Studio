@@ -107,6 +107,7 @@ import { runGateAutofix } from "./gate-autofix.js";
 import { inspectGateFinding, mahkemeRuling, type MahkemeAction } from "./inspector.js";
 import { Phase0Controller } from "./phase-0.js";
 import { snapshotPrototype } from "./prototype-cache.js";
+import { runPhaseContributionReport } from "./phase-contribution.js";
 import { extractStockedModules } from "./module-stock.js";
 import { generateGuideShots } from "./guide-shots.js";
 import {
@@ -3244,6 +3245,11 @@ async function advanceToNextPhaseInner(from: PhaseId): Promise<void> {
       // emin değilse no-op — çöp yok). Non-blocking; kendi içinde yeşil/stack/CLI kontrolü.
       await extractStockedModules(state, cfg).catch((e: unknown) =>
         log.warn("orchestrator", "module extraction failed (non-fatal)", e),
+      );
+      // Faz-Katkı Mahkemesi (YZLLM 2026-06-22): her fazın bu koşuya katkı yüzdesini mahkeme değerlendirip
+      // Türkçe rapor chat'e basar → kullanıcı gereksiz fazı görüp KENDİ budar. Flag-gated + fail-soft.
+      await runPhaseContributionReport(state, cfg).catch((e: unknown) =>
+        log.warn("orchestrator", "phase-contribution report failed (non-fatal)", e),
       );
       // YZLLM 2026-06-14: app-içi kılavuzun ekran görüntüleri — .mycl/help-pages.json route'larının ss'leri
       // hedef-app public/docs/guide-shots/'a (dev server ayaktaysa; bayat-temizlikli). updateLivingDocs SONRASI,
