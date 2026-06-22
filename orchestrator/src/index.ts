@@ -608,12 +608,27 @@ async function failPhase(n: PhaseId, ctrl?: FailReasonHolder): Promise<void> {
       });
       const ruling = mahkemeRuling(insp);
       if (ruling.convened && ruling.action !== "proceed") {
-        autoResolve = false; // merkezi yolda force-pass yok → suppress de escalate de İNSANA düşer
+        // FROZEN-GOAL (escalate-stall fix, canlı Arcelik_BO 2026-06-22): bu noktada otoCevap ZATEN açık
+        // (mahkeme yalnız autoResolve=otoCevap iken koşar). Oto-modda askq'da BLOKLAMAK = SESSİZ STALL
+        // (kullanıcı izlemiyor → soru cevapsız asılı kalır; frozen-goal "asla sessizce tıkanma" ihlali —
+        // canlı kanıt: Faz 10 false-positive/auth bulgusunda donma). Çözüm: LOUD ACCEPT-CONTINUE — bulgu
+        // RAPORA/audit'e yazılır (YUTULMAZ), çalışan kod riske atılmaz (oto-fix YOK), faz kabul-devam eder
+        // (insan sonra raporu inceler). Faz 13 güvenlik yolundaki kanıtlı desenin genel failPhase'e taşınması.
         mahkemeDiverted = true;
+        await appendAuditModule(runtime.state.project_root, {
+          ts: Date.now(),
+          phase: n,
+          event: `mahkeme-${ruling.action}-accept-continue`,
+          caller: "mycl-orchestrator",
+          detail: ruling.summary.slice(0, 400),
+        }).catch(() => {});
         emitChatMessage(
           "system",
-          `⚖️ Mahkeme: bu hatada otomatik düzeltme uygun değil (${ruling.action}) — çalışan kodu riske atmadan sana bırakıyorum.\n${ruling.summary}`,
+          `⚖️ Mahkeme (${ruling.action}): oto-modda akış BLOKLANMAZ — Faz ${n} bulgusu RAPORA yazıldı, çalışan ` +
+            `kod riske atılmadan kabul-devam edildi (sonra inceleyebilirsin).\n${ruling.summary}`,
         );
+        await advanceToNextPhase(n);
+        return;
       }
     } catch (e) {
       log.warn("orchestrator", "mahkeme failPhase incelemesi hata (yutuldu → normal akış)", { error: String(e) });
