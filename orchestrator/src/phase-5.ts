@@ -37,7 +37,7 @@ import {
 } from "./intent-router/handlers/command.js";
 import { emitChatMessage, emitError, emitPhaseRunning } from "./ipc.js";
 import { loadProfile, resolveCommand } from "./profile-loader.js";
-import { applyPrototype } from "./prototype-cache.js";
+import { applyPrototype, surfacePrototypeModuleSearch } from "./prototype-cache.js";
 import { replaceActiveWatcher } from "./runtime-error-watcher.js";
 import { ensureViteRuntimeInjection } from "./vite-runtime-injector.js";
 import { log } from "./logger.js";
@@ -106,6 +106,9 @@ export class Phase5Controller {
     // prototip varsa, codegen BAŞLAMADAN baseline'ı projeye kopyala → ana ajan sıfırdan
     // değil doğrulanmış baseline üzerine geliştirir. Self-guard'lı + non-blocking.
     await applyPrototype(this.state);
+    // Çapraz-prototip modül araması (YZLLM 2026-06-22): niyete uygun HAZIR modüller (login/ürünler
+    // sayfası gibi) TÜM prototiplerde aranıp yüzeye çıkar → ajan sıfırdan yazmaz, yeniden kullanır.
+    await surfacePrototypeModuleSearch(this.state);
 
     let systemPrompt: string;
     try {

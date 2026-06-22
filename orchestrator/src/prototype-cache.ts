@@ -159,6 +159,73 @@ export function deriveModules(files: string[]): PrototypeModule[] {
   return out;
 }
 
+/** Bir modül + hangi prototipte olduğu (çapraz-arama sonucu). */
+export interface PrototypeModuleMatch extends PrototypeModule {
+  stack: string;
+  /** Prototip kök dizini (modül oradan çekilebilir). */
+  dir: string;
+}
+
+/**
+ * TÜM prototiplerin manifest'lerinde (prototypes/<stack>.meta.json) modül arar (YZLLM 2026-06-22):
+ * yeni proje açarken "login sayfası lazım" → hangi prototipte HAZIR varsa bulur (tüm dosyaları taramadan,
+ * meta'dan). query boş → tüm modüller; query verilirse adında query-kelimelerinden (≥3 harf) biri geçenler
+ * (case-insensitive). FS-okur, ASLA throw etmez (bozuk/eksik meta atlanır).
+ */
+export async function searchPrototypeModules(query = ""): Promise<PrototypeModuleMatch[]> {
+  const out: PrototypeModuleMatch[] = [];
+  try {
+    const base = prototypesBaseDir();
+    const entries = await fs.readdir(base, { withFileTypes: true }).catch(() => [] as import("node:fs").Dirent[]);
+    const terms = query
+      .toLowerCase()
+      .split(/[^a-zçğıöşü0-9]+/i)
+      .filter((t) => t.length >= 3);
+    for (const e of entries) {
+      if (!e.isFile() || !e.name.endsWith(".meta.json")) continue;
+      try {
+        const meta = JSON.parse(await fs.readFile(join(base, e.name), "utf-8")) as PrototypeMeta;
+        for (const mod of meta.modules ?? []) {
+          // Tip-sonekini (" sayfası" / " API") AT → ayırt-edici route kısmına ("login", "auth/login",
+          // "urunler") eşle. Yoksa "sayfası"/"api" gibi ortak sözcükler TÜM modülleri eşler (aşırı-eşleşme).
+          const distinctive = mod.name.replace(/\s+(sayfası|api)$/i, "").toLowerCase();
+          if (terms.length === 0 || terms.some((t) => distinctive.includes(t))) {
+            out.push({ ...mod, stack: meta.stack, dir: prototypeDir(meta.stack) });
+          }
+        }
+      } catch {
+        /* bozuk meta → atla */
+      }
+    }
+  } catch {
+    /* prototypes/ yok → boş */
+  }
+  return out;
+}
+
+/**
+ * IMPURE: Faz 5'te çağrılır. Yeni projenin niyetine (intent_summary) uygun HAZIR modülleri TÜM prototiplerde
+ * arayıp chat'e basar → ajan + kullanıcı "login sayfası prototipte var" görür, sıfırdan yazmaz. Eşleşme yoksa
+ * / niyet boşsa no-op. NON-BLOCKING — asla throw etmez.
+ */
+export async function surfacePrototypeModuleSearch(state: State): Promise<void> {
+  try {
+    const query = state.intent_summary ?? "";
+    if (!query.trim()) return;
+    const matches = await searchPrototypeModules(query);
+    if (matches.length === 0) return;
+    const shown = matches.slice(0, 12);
+    const list = shown.map((m) => `${m.name} (${m.stack})`).join(", ");
+    emitChatMessage(
+      "system",
+      `🔎 Niyetine uygun HAZIR modüller prototiplerde mevcut (sıfırdan yazma — yeniden kullan/uyarla): ` +
+        `${list}${matches.length > shown.length ? " …" : ""}.`,
+    );
+  } catch (e) {
+    log.warn("prototype-cache", "modül-arama yüzeyleme başarısız (non-fatal)", e);
+  }
+}
+
 /** SAF: meta MAX_AGE_DAYS'ten eski mi (bayat). now ms epoch. */
 export function isStale(meta: PrototypeMeta, now: number, maxAgeDays = MAX_AGE_DAYS): boolean {
   return now - meta.createdAt > maxAgeDays * 24 * 60 * 60 * 1000;
