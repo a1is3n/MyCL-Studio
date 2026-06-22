@@ -3055,8 +3055,17 @@ async function shouldRunMechanical(
       runtime.state ? currentSpecPath(runtime.state) : pathJoin(projectRoot, ".mycl", "spec.md"),
       "utf-8",
     );
-  } catch {
-    return false;
+  } catch (e) {
+    // KUŞKUDA FULL (sessiz-fallback denetimi): spec okunamazsa skip-koşulunu DEĞERLENDİREMEYİZ → atlamak
+    // (return false) gate'i sessizce no-op yapar (false-green). Güvenli taraf = gate'i KOŞ (return true) +
+    // GÖRÜNÜR uyarı. (ENOENT bile olsa: spec yoksa atlamak değil, emniyetli koşmak.)
+    const code = (e as { code?: string }).code;
+    log.error("orchestrator", "shouldRunMechanical: spec okunamadı → gate emniyetli KOŞULUYOR (atlanmıyor)", { code, error: String(e) });
+    emitChatMessage(
+      "system",
+      `⚠️ Faz skip-koşulu için spec okunamadı (${code ?? "hata"}) → gate atlanmıyor, emniyetli şekilde KOŞULUYOR (kuşkuda full).`,
+    );
+    return true;
   }
   const lower = spec.toLowerCase();
   if (skip_unless === "has_ui") {

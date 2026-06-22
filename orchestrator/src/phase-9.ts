@@ -290,7 +290,13 @@ export class Phase9Controller {
     const rawDecs = outcome.approvalInput.decisions;
     const decisions = (Array.isArray(rawDecs) ? rawDecs : []) as RiskDecision[];
     if (rawDecs !== undefined && !Array.isArray(rawDecs)) {
-      log.warn("phase-9", "decisions array değil — boş kabul edildi", { type: typeof rawDecs });
+      // Şema ihlali (sessiz-fallback denetimi): bozuk decisions'ı sessizce [] saymak, bulunan riskleri
+      // dispatch ETMEDEN yutar → riskler GÖRÜNMEDEN geçer (false-green). GÖRÜNÜR kıl.
+      log.error("phase-9", "risk decisions array DEĞİL — şema ihlali, riskler dispatch edilemiyor", { type: typeof rawDecs });
+      emitError(
+        "Faz 9 risk kararları bozuk (şema ihlali)",
+        `decisions alanı ${typeof rawDecs} geldi (array bekleniyordu) — bulunan riskler otomatik düzeltmeye gönderilemedi; elle gözden geçir.`,
+      );
     }
     for (const d of decisions) {
       await appendAudit(this.state.project_root, {

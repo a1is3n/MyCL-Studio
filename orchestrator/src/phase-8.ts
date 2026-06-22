@@ -362,8 +362,16 @@ export class Phase8Controller {
       const specMdPath = currentSpecPath(this.state);
       const specMd = await readFile(specMdPath, "utf-8");
       this.acCountCache = countAcceptanceCriteria(specMd);
-    } catch {
+    } catch (e) {
+      // Faz 8'de spec.md OLMALI (Faz 4 yazar). Okunamaması anomali — sessizce AC=0 sayıp yeşil-eşiğini
+      // (minGreens) düşürmek FALSE-GREEN doğurur. GÖRÜNÜR kıl (sessiz-fallback denetimi).
       this.acCountCache = 0;
+      const code = (e as { code?: string }).code;
+      log.error("phase-8", "getAcCount: spec.md okunamadı → AC=0 (yeşil-eşiği güvenilmez)", { code, error: String(e) });
+      emitChatMessage(
+        "system",
+        `⚠️ Faz 8: kabul-kriterleri kaynağı (spec.md) okunamadı (${code ?? "hata"}) — AC sayısı doğrulanamadı; yeşil-eşiği olduğundan düşük olabilir. spec'i kontrol et.`,
+      );
     }
     return this.acCountCache;
   }
@@ -378,8 +386,12 @@ export class Phase8Controller {
         "utf-8",
       );
       this.acIdsCache = parseAcIds(specMd);
-    } catch {
+    } catch (e) {
       this.acIdsCache = [];
+      log.error("phase-8", "getAcIds: spec.md okunamadı → AC ID listesi boş (AC→test kapsam raporu güvenilmez)", {
+        code: (e as { code?: string }).code,
+        error: String(e),
+      });
     }
     return this.acIdsCache;
   }
