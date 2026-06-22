@@ -242,4 +242,4 @@ assets/
 
 ## Lisans
 
-Özel proje — YZLLM.
+MIT — YZLLM.
