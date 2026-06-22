@@ -126,9 +126,9 @@ describe("prototype-cache · snapshot + apply round-trip (MYCL_HOME izole)", () 
     await writeFile(join(src, "README.md"), "# proje");
   }
 
-  it("YEŞİL koşu → baseline kaydedilir, feature HARİÇ; apply greenfield'e kopyalar", async () => {
+  it("YEŞİL koşu → TAM proje kaydedilir (feature DAHİL); apply greenfield'e komple kopyalar", async () => {
     await seedSourceProject();
-    // YEŞİL audit: tamamlandı + gate-fail yok.
+    // YEŞİL audit: tamamlandı + gate-fail yok → verdict PASS → TÜM dosyalar (YZLLM 2026-06-22).
     await appendAudit(src, { ts: Date.now(), phase: 17, event: "phase-17-complete", caller: "mycl-orchestrator" });
 
     await snapshotPrototype(fakeState(src, "node-npm"));
@@ -138,20 +138,20 @@ describe("prototype-cache · snapshot + apply round-trip (MYCL_HOME izole)", () 
     expect(existsSync(join(cacheDir, "vite.config.ts"))).toBe(true);
     expect(existsSync(join(cacheDir, "src", "main.tsx"))).toBe(true);
     expect(existsSync(join(cacheDir, "public", "logo.svg"))).toBe(true);
-    // feature SIZMADI:
-    expect(existsSync(join(cacheDir, "src", "components", "Survey.tsx"))).toBe(false);
-    expect(existsSync(join(cacheDir, "README.md"))).toBe(false);
+    // YEŞİL → feature DE DAHİL (tam çalışan proje prototip olur):
+    expect(existsSync(join(cacheDir, "src", "components", "Survey.tsx"))).toBe(true);
+    expect(existsSync(join(cacheDir, "README.md"))).toBe(true);
     // meta yazıldı:
     expect(existsSync(join(myclHome, "prototypes", "node-npm.meta.json"))).toBe(true);
     const meta = JSON.parse(await readFile(join(myclHome, "prototypes", "node-npm.meta.json"), "utf-8"));
     expect(meta.stack).toBe("node-npm");
 
-    // apply: boş (greenfield) target'a kopyalar.
+    // apply: boş (greenfield) target'a komple kopyalar (full prototip → feature dahil).
     const applied = await applyPrototype(fakeState(target, "node-npm", 5));
     expect(applied).toBe(true);
     expect(existsSync(join(target, "package.json"))).toBe(true);
     expect(existsSync(join(target, "src", "main.tsx"))).toBe(true);
-    expect(existsSync(join(target, "src", "components", "Survey.tsx"))).toBe(false);
+    expect(existsSync(join(target, "src", "components", "Survey.tsx"))).toBe(true);
   });
 
   it("gate-fail VAR ama TAMAMLANDI → snapshot YİNE kaydedilir (YZLLM: baseline kalite-fail'inden etkilenmez)", async () => {
