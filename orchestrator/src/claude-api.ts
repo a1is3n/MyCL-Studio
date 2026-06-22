@@ -99,7 +99,11 @@ export function isApiAccountError(text: string): boolean {
  */
 export function isEnvironmentError(text: string): boolean {
   if (isApiAccountError(text)) return true;
-  return /E2BIG|argument list too long|EADDRINUSE|address already in use|port \d+.*(in use|busy|kullan)|spawn \w+ ENOENT|command not found|: not found|EACCES|ECONNREFUSED|ENOTFOUND/i.test(
+  // OS/kaynak errno'ları (YZLLM 2026-06-22, tıkanma-envanteri): OOM/disk-dolu/fd-limiti/izin/symlink-döngü
+  // — bunlar PROJE kodu hatası DEĞİL (kod kurcalayarak çözülmez) ve mechanical-runner.isSpawnEnvFailure bunları
+  // zaten tanıyordu ama merkezi text-sınıflandırıcı KAÇIRIYORDU → faz-hatası proje-fix döngüsüne sızıyordu.
+  // Yanlış-pozitif riski düşük (errno'lar test-iddiası metninde nadir) + sonuç SESLİ escalate (sessiz stall değil).
+  return /E2BIG|argument list too long|EADDRINUSE|address already in use|port \d+.*(in use|busy|kullan)|spawn \w+ ENOENT|command not found|: not found|EACCES|\bEPERM\b|ECONNREFUSED|ENOTFOUND|\bENOMEM\b|\bENOSPC\b|\bEMFILE\b|\bENFILE\b|\bEAGAIN\b|\bELOOP\b|out of memory|no space left|too many open files/i.test(
     text,
   );
 }
@@ -117,6 +121,21 @@ export function environmentErrorAdvice(text: string): string {
   }
   if (/ECONNREFUSED|ENOTFOUND/i.test(text)) {
     return "Ağ/bağlantı sorunu (ortam, proje hatası DEĞİL). Bağlantıyı kontrol edip 'Çalıştır' ile devam edin.";
+  }
+  if (/\bENOSPC\b|no space left/i.test(text)) {
+    return "Diskte yer kalmadı (ENOSPC) — proje hatası DEĞİL. Disk alanı açın, sonra 'Çalıştır' ile devam edin.";
+  }
+  if (/\bENOMEM\b|out of memory|\bEAGAIN\b/i.test(text)) {
+    return "Sistem kaynağı tükendi (bellek/proses — ENOMEM/EAGAIN), proje hatası DEĞİL. Ağır süreçleri kapatıp belleği boşaltın, sonra 'Çalıştır' ile devam edin.";
+  }
+  if (/\b(EMFILE|ENFILE)\b|too many open files/i.test(text)) {
+    return "Açık dosya tanıtıcısı limiti aşıldı (EMFILE) — proje hatası DEĞİL. Süreçleri azaltın ya da `ulimit -n` artırın, sonra 'Çalıştır' ile devam edin.";
+  }
+  if (/\bEPERM\b/i.test(text)) {
+    return "İzin reddedildi (EPERM — işletim sistemi/sandbox/TCC) — proje hatası DEĞİL. Gerekli izni verin, sonra 'Çalıştır' ile devam edin.";
+  }
+  if (/\bELOOP\b/i.test(text)) {
+    return "Sembolik bağlantı döngüsü (ELOOP) — proje hatası DEĞİL. Bozuk symlink'i düzeltin, sonra 'Çalıştır' ile devam edin.";
   }
   return "Bu bir ORTAM sorunu (proje/kod hatası DEĞİL) — kod kurcalayarak çözülmez. Ortamı düzeltip 'Çalıştır' ile devam edin. Otomatik tırmanma/düzeltme YAPMADIM (boşuna olurdu).";
 }

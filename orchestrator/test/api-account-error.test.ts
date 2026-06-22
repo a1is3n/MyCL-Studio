@@ -25,6 +25,14 @@ describe("isEnvironmentError (YZLLM: escalation yalnız PROJE hatasında)", () =
     expect(isEnvironmentError("Your credit balance is too low")).toBe(true); // hesap da ortam
     expect(isEnvironmentError("sh: vite: command not found")).toBe(true);
   });
+  it("OS/kaynak errno'ları → true (proje-fix döngüsüne SIZMAZ; 2026-06-22 tıkanma-envanteri)", () => {
+    expect(isEnvironmentError("spawn vitest EAGAIN")).toBe(true); // proses/kaynak tükendi
+    expect(isEnvironmentError("Cannot allocate memory: ENOMEM")).toBe(true); // OOM
+    expect(isEnvironmentError("write ENOSPC: no space left on device")).toBe(true); // disk dolu
+    expect(isEnvironmentError("Error: EMFILE: too many open files")).toBe(true); // fd limiti
+    expect(isEnvironmentError("EPERM: operation not permitted, open '/x'")).toBe(true); // izin/TCC
+    expect(isEnvironmentError("ELOOP: too many symbolic links")).toBe(true); // symlink döngüsü
+  });
   it("proje/kod hatası → false (tırmanma ÇALIŞIR)", () => {
     expect(isEnvironmentError("TypeError: x is not a function")).toBe(false);
     expect(isEnvironmentError("Test failed: expected 3 got 5")).toBe(false);
