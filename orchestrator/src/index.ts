@@ -11,6 +11,7 @@ import {
   ModelSelectionMissingError,
   loadConfig,
   persistApiKeys,
+  hasUsableKeysAfterMerge,
   persistAgentBackends,
   persistFeatures,
   persistSelectedModels,
@@ -1349,10 +1350,16 @@ async function emitInitialTaskQueue(projectRoot: string): Promise<void> {
   }
 }
 
-async function handleSaveApiKeys(keys: ApiKeys): Promise<void> {
+async function handleSaveApiKeys(keys: Partial<ApiKeys>): Promise<void> {
   log.info("orchestrator", "save_api_keys", { keys }); // logger REDACT eder
-  if (!keys || !keys.translator || !keys.main) {
-    emitError("save_api_keys: both translator and main keys required", null);
+  // MERGE-aware validasyon (z.ai, YZLLM 2026-06-22): kayıt PATCH'tir — boş alan mevcut key'i silmez.
+  // z.ai key'i eklerken claude key'lerini yeniden girmeye zorlama + z.ai-only kurulumu engelleme.
+  // Merge sonrası (claude translator+main) YA DA (bir z.ai key) varsa geçerli; ikisi de yoksa reddet.
+  if (!keys || !(await hasUsableKeysAfterMerge(keys))) {
+    emitError(
+      "save_api_keys: en az claude translator+main YA DA bir z.ai key gerekli (kayıt boş bırakılamaz)",
+      null,
+    );
     return;
   }
   try {
@@ -5820,7 +5827,7 @@ ipcRouter.register("askq_answer", async (data: unknown) => {
   );
 });
 ipcRouter.register("save_api_keys", async (data: unknown) => {
-  await handleSaveApiKeys(data as ApiKeys);
+  await handleSaveApiKeys(data as Partial<ApiKeys>);
 });
 ipcRouter.register("check_config", async () => {
   await emitConfigStatus();

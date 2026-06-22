@@ -463,9 +463,11 @@ export type OrchestratorCommand =
     }
   | {
       kind: "save_api_keys";
+      // PATCH/merge semantiği: yalnız dolu alanlar gönderilir; boş alan mevcut key'i korur (silmez).
+      // translator/main da opsiyonel — z.ai key'i eklerken claude key'lerini yeniden girmeye gerek yok.
       data: {
-        translator: string;
-        main: string;
+        translator?: string;
+        main?: string;
         orchestrator?: string;
         // z.ai (GLM) rol-başına key'ler — provider=zai seçili rolde kullanılır + claude→z.ai fallback'ın halkası.
         zai_translator?: string;

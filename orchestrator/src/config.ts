@@ -638,7 +638,7 @@ function mergeDefinedFields(
   return out;
 }
 
-export async function persistApiKeys(keys: ApiKeys): Promise<void> {
+export async function persistApiKeys(keys: Partial<ApiKeys>): Promise<void> {
   await fs.mkdir(configDir(), { recursive: true, mode: 0o700 });
   // MERGE (kod-analiz 2026-06-07): mevcut secrets'ı KORU. Eskiden `JSON.stringify({api_keys: keys})`
   // dosyayı tamamen eziyordu + UI payload relevance/orchestrator taşımadığından bu key'ler sessizce
@@ -651,6 +651,38 @@ export async function persistApiKeys(keys: ApiKeys): Promise<void> {
   const raw =
     JSON.stringify({ ...existing, api_keys: mergedKeys }, null, 2) + "\n";
   await fs.writeFile(secretsPath(), raw, { encoding: "utf-8", mode: 0o600 });
+}
+
+/**
+ * save_api_keys merge-aware validasyonu (z.ai, YZLLM 2026-06-22). Kayıt bir PATCH'tir: persistApiKeys
+ * mevcut secrets'ı KORUR + sadece dolu alanları merge'ler (boş alan mevcut key'i SİLMEZ). Dolayısıyla
+ * eski "her kayıtta translator+main zorunlu" kuralı YANLIŞTI — z.ai key'i eklerken claude key'lerini
+ * (formda boş, secrets'ta dolu) yeniden girmeye zorluyordu + z.ai-only kurulumu engelliyordu.
+ * Merge SONRASI kullanılabilir key var mı? (claude translator+main) YA DA (herhangi bir z.ai key) → true.
+ * İkisi de yoksa (tamamen boş kayıt) false → çağıran görünür hata verir.
+ */
+/**
+ * SAF (IO'suz, test edilebilir) merge-validasyon: mevcut secrets + patch birleştiğinde kullanılabilir
+ * key var mı? (claude translator+main) YA DA (herhangi bir z.ai key). Boş string/undefined dolu sayılmaz.
+ */
+export function hasUsableKeys(existing: Partial<ApiKeys>, patch: Partial<ApiKeys>): boolean {
+  const has = (v: string | undefined): boolean => !!v && v.trim().length > 0;
+  const claudeOk = (has(patch.translator) || has(existing.translator)) && (has(patch.main) || has(existing.main));
+  const zaiOk = [
+    patch.zai_translator,
+    patch.zai_main,
+    patch.zai_orchestrator,
+    existing.zai_translator,
+    existing.zai_main,
+    existing.zai_orchestrator,
+    existing.zai,
+  ].some(has);
+  return claudeOk || zaiOk;
+}
+
+export async function hasUsableKeysAfterMerge(patch: Partial<ApiKeys>): Promise<boolean> {
+  const existing = await loadSecrets();
+  return hasUsableKeys((existing.api_keys ?? {}) as Partial<ApiKeys>, patch);
 }
 
 /**

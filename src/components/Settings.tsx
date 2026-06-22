@@ -288,9 +288,18 @@ export function Settings({
   }, [effort]);
 
   const modelsValid = translatorSel && mainSel;
-  const apiKeysValid =
-    apiKeyTranslator.trim().startsWith("sk-ant-") &&
-    apiKeyMain.trim().startsWith("sk-ant-");
+  // Kayıt bir PATCH (merge): en az bir alan doluysa kaydet aktif (z.ai-only / kısmi güncelleme mümkün).
+  // sk-ant- ön-ek zorunluluğu KALDIRILDI (z.ai key'leri farklı formatta + claude key'lerini formda boş
+  // bırakıp sadece z.ai eklemeyi engelliyordu). Yetkili merge-validasyon orkestratörde (hasUsableKeysAfterMerge);
+  // yetersizse görünür hata döner.
+  const apiKeysValid = [
+    apiKeyTranslator,
+    apiKeyMain,
+    apiKeyOrchestrator,
+    apiKeyZaiTranslator,
+    apiKeyZaiMain,
+    apiKeyZaiOrchestrator,
+  ].some((k) => k.trim().length > 0);
 
   const overlayStyle = useMemo(
     () => ({
