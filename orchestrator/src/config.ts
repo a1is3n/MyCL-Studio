@@ -101,11 +101,19 @@ export interface ApiKeys {
    */
   orchestrator?: string;
   /**
-   * z.ai (GLM) API key — fallback ladder'ın 3. halkası (claude-CLI → claude-API → z.ai).
-   * Anthropic-uyumlu endpoint (api.z.ai/api/anthropic). Opsiyonel — yoksa fallback DEVRE DIŞI,
-   * davranış aynen claude. env: MYCL_API_KEY_ZAI ya da secrets.json api_keys.zai.
+   * z.ai (GLM) DEFAULT key — per-rol key (zai_<role>) set değilse o rolün z.ai sağlayıcısı
+   * bunu kullanır + claude account-error fallback'i bunu kullanır. Anthropic-uyumlu endpoint
+   * (api.z.ai/api/anthropic). env: MYCL_API_KEY_ZAI.
    */
   zai?: string;
+  /**
+   * z.ai per-rol key'leri (translator/main/orchestrator) — rolün provider'ı "zai" seçilince
+   * o rolün z.ai çağrıları bu key'i kullanır (set değilse `zai` default'una düşer). claude
+   * key'lerine paralel. env: MYCL_API_KEY_ZAI_TRANSLATOR / _MAIN / _ORCHESTRATOR.
+   */
+  zai_translator?: string;
+  zai_main?: string;
+  zai_orchestrator?: string;
 }
 
 export interface SelectedModels {
@@ -208,8 +216,11 @@ const DEFAULT_FEATURES: FeatureFlags = {
  * = `claude` CLI (abonelik). Eski `features.claude_code_cli_enabled:true` →
  * `main:"cli"` migration'ı resolveAgentBackends'te yapılır.
  */
-/** Efektif (çözülmüş) backend — dispatch noktalarının tükettiği. */
-export type AgentBackend = "api" | "cli";
+/** Efektif (çözülmüş) backend — dispatch noktalarının tükettiği. "zai" = z.ai/GLM
+ *  sağlayıcısı (Anthropic-uyumlu SDK yolu, baseURL=z.ai; CLI'ye env ile de enjekte
+ *  edilebilir). Provider AYRI eksen değil — backend'in 3. değeri (api/cli/zai), rol
+ *  başına combobox'tan seçilir. "zai" "auto"ya girmez (açık seçim). */
+export type AgentBackend = "api" | "cli" | "zai";
 /**
  * Yapılandırılmış backend (config'te saklanan). "auto" = Auto Mode: CLI ile başla,
  * abonelik limiti dolunca API kullan, limit açılınca CLI'ye dön (cli-rate-limit.ts).
@@ -353,8 +364,11 @@ function resolveApiKeys(secrets: SecretsFile): ApiKeys {
   // Orchestrator agent (v15.5) opsiyonel — set edilmezse main key fallback
   // (orchestratorApiKey() helper'ı ile).
   const orchestratorKey = envOrchestrator ?? secrets.api_keys?.orchestrator;
-  // z.ai (GLM) fallback key — opsiyonel; yoksa fallback devre dışı (davranış aynen claude).
+  // z.ai (GLM) DEFAULT key + per-rol key'ler — opsiyonel; yoksa z.ai devre dışı (davranış aynen claude).
   const zaiKey = process.env.MYCL_API_KEY_ZAI ?? secrets.api_keys?.zai;
+  const zaiTranslator = process.env.MYCL_API_KEY_ZAI_TRANSLATOR ?? secrets.api_keys?.zai_translator;
+  const zaiMain = process.env.MYCL_API_KEY_ZAI_MAIN ?? secrets.api_keys?.zai_main;
+  const zaiOrchestrator = process.env.MYCL_API_KEY_ZAI_ORCHESTRATOR ?? secrets.api_keys?.zai_orchestrator;
   if (!translatorKey || !mainKey) {
     throw new ApiKeyMissingError(
       `API key eksik. Settings → API Keys'ten girin.`,
@@ -366,6 +380,9 @@ function resolveApiKeys(secrets: SecretsFile): ApiKeys {
     ...(relevanceKey ? { relevance: relevanceKey } : {}),
     ...(orchestratorKey ? { orchestrator: orchestratorKey } : {}),
     ...(zaiKey ? { zai: zaiKey } : {}),
+    ...(zaiTranslator ? { zai_translator: zaiTranslator } : {}),
+    ...(zaiMain ? { zai_main: zaiMain } : {}),
+    ...(zaiOrchestrator ? { zai_orchestrator: zaiOrchestrator } : {}),
   };
 }
 
@@ -488,9 +505,68 @@ function resolveAgentBackends(file: ConfigFile): AgentBackends {
  * zaman agent_backends'i doldurur; partial/cast config'lere karşı savunmacı — eksikse
  * "auto" (YZLLM 2026-06-12: varsayılan auto). Tek çözüm-noktası: 9 dispatch yeri bunu çağırır.
  */
-export function backendForRole(config: MyclConfig, role: AgentRole): AgentBackend {
+export function backendForRole(config: MyclConfig, role: AgentRole): "api" | "cli" {
   const configured = config.agent_backends?.[role] ?? "auto";
+  // z.ai = SDK/API yolu → legacy api/cli tüketicileri (autoBackendPair vb.) "api" görür.
+  // GERÇEK z.ai dispatch'i resolveProvider'dan (configured'ı doğrudan okur). Böylece "zai"
+  // eklemek mevcut ikili-dispatch'leri kırmaz (correct-by-construction, kademeli).
+  if (configured === "zai") return "api";
   return resolveAuto(configured, configured === "auto" ? cliCurrentlyLimited() : false);
+}
+
+// z.ai (GLM) Anthropic-uyumlu CHAT endpoint + default model. config = alt katman → claude-api.ts
+// buradan import eder (circular yok). Per-rol/tier GLM modeli sonraki inkrementte (provider-aware katalog).
+export const ZAI_BASE_URL = process.env.MYCL_ZAI_BASE_URL ?? "https://api.z.ai/api/anthropic";
+export const ZAI_MODEL = process.env.MYCL_ZAI_MODEL ?? "glm-4.6";
+
+/** Rolün z.ai key'i: per-rol (zai_<role>) ?? default zai. undefined → o rol için z.ai yok. */
+export function zaiKeyForRole(keys: ApiKeys, role: AgentRole): string | undefined {
+  const perRole =
+    role === "translator" ? keys.zai_translator
+    : role === "orchestrator" ? keys.zai_orchestrator
+    : keys.zai_main;
+  return perRole ?? keys.zai;
+}
+
+/** Rolün claude key'i (provider claude iken). */
+function claudeKeyForRole(keys: ApiKeys, role: AgentRole): string {
+  return role === "translator"
+    ? keys.translator
+    : role === "orchestrator"
+    ? orchestratorApiKey(keys)
+    : keys.main;
+}
+
+/** Merkezi LLM hedefi: rolün provider'ı + key + baseURL (model AYRI çözülür). */
+export interface LlmTarget {
+  backend: AgentBackend; // api | cli | zai
+  isZai: boolean;
+  apiKey: string; // birincil sağlayıcının key'i
+  baseURL?: string; // z.ai → ZAI_BASE_URL; claude → undefined
+  zaiFallbackKey?: string; // claude-primary'de account-error fallback için rolün z.ai key'i (varsa)
+}
+
+/**
+ * MERKEZİ provider çözücü (correct-by-construction): rolün provider'ını (combobox: api/cli/zai)
+ * + key + baseURL'ünü TEK yerden döndürür. Tüm LLM call-site'lar ham config.api_keys.* yerine bunu
+ * kullanmalı. Model AYRI çözülür (provider-aware katalog — sonraki inkrement; z.ai → GLM modeli).
+ * Provider "zai" iken z.ai key yoksa savunmacı olarak claude'a düşer (sessiz-yanlış-model yerine çalışan).
+ */
+export function resolveProvider(config: MyclConfig, role: AgentRole): LlmTarget {
+  const keys = config.api_keys;
+  const configured = config.agent_backends?.[role] ?? "auto";
+  if (configured === "zai") {
+    const zaiKey = zaiKeyForRole(keys, role);
+    if (zaiKey) return { backend: "zai", isZai: true, apiKey: zaiKey, baseURL: ZAI_BASE_URL };
+    // z.ai seçili ama key yok → savunmacı: çalışan claude-api (sessiz-yanlış-model yerine).
+    return { backend: "api", isZai: false, apiKey: claudeKeyForRole(keys, role) };
+  }
+  return {
+    backend: backendForRole(config, role), // api | cli
+    isZai: false,
+    apiKey: claudeKeyForRole(keys, role),
+    zaiFallbackKey: zaiKeyForRole(keys, role),
+  };
 }
 
 /** Rol Auto Mode'da mı (factory'ler görünür CLI→API fallback'i yalnız auto'da uygular). */

@@ -11,7 +11,7 @@
 // kendi tool set'i, system prompt'u, gate logic'iyle bu wrapper'ı çağırır.
 
 import Anthropic from "@anthropic-ai/sdk";
-import type { MyclConfig } from "./config.js";
+import { ZAI_BASE_URL, ZAI_MODEL, type MyclConfig } from "./config.js";
 import { emitChatMessage, emitClaudeStream, recordTokenUsage } from "./ipc.js";
 import { log } from "./logger.js";
 
@@ -155,11 +155,6 @@ export function makeAnthropicClient(
   });
 }
 
-// z.ai (GLM) Anthropic-uyumlu endpoint + model — fallback ladder'ın 3. halkası (claude-CLI →
-// claude-API → z.ai). Env ile override edilebilir (Aşama 2: Settings/per-rol). API key
-// config.api_keys.zai (secrets.json). Anthropic-uyumlu → claude-api.ts OLDUĞU GİBİ reuse.
-export const ZAI_BASE_URL = process.env.MYCL_ZAI_BASE_URL ?? "https://api.z.ai/api/anthropic";
-export const ZAI_MODEL = process.env.MYCL_ZAI_MODEL ?? "glm-4.6";
 
 // Anthropic API "Overloaded" (529) yoğun günlerde sık görülüyor. Phase 6 fix
 // turn'leri uzun + paralel kullanım yüksek → daha sabırlı retry kullanıcı için
