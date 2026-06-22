@@ -252,7 +252,13 @@ export class Phase7Controller {
         for (const m of schema.migrations) {
           const sql = m.sql ?? m.sql_sketch;
           if (!sql || sql.trim().length === 0) {
-            log.warn("phase-7", "migration missing SQL — skip", { order: m.order, description: m.description });
+            // ZORUNLU alan boş = model/coercion sorunu (sessiz-fallback denetimi). Sessiz skip → migration
+            // yazılmaz → DB şeması eksik → Faz 8 yanlış-temiz olabilir. GÖRÜNÜR kıl.
+            log.error("phase-7", "migration ZORUNLU SQL'i boş — yazılmadı (DB şeması eksik kalabilir)", { order: m.order, description: m.description });
+            emitError(
+              "Faz 7: bir migration'ın SQL'i boş geldi",
+              `order=${m.order} "${m.description}" — bu migration YAZILMADI; DB şeması eksik kalabilir, elle kontrol et.`,
+            );
             continue;
           }
           const order = String(m.order).padStart(3, "0");
@@ -270,7 +276,13 @@ export class Phase7Controller {
         log.info("phase-7", "migrations written", { count: writtenPaths.length });
       }
     } catch (err) {
-      log.warn("phase-7", "migration file write failed (non-blocking)", err);
+      // Migration yazımı DB doğruluğu için olmazsa-olmaz (sessiz-fallback denetimi): sessiz log.warn →
+      // migrations kaybolur → DB şeması yanlış → Faz 8 yanlış-temiz. GÖRÜNÜR kıl.
+      log.error("phase-7", "migration dosya yazımı BAŞARISIZ — DB şeması eksik kalabilir", err);
+      emitError(
+        "Faz 7: migration yazımı başarısız",
+        `${String(err).slice(0, 200)} — DB şeması eksik olabilir; disk/izin kontrol et.`,
+      );
     }
 
     await appendAudit(this.state.project_root, {

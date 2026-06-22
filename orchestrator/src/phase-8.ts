@@ -893,20 +893,30 @@ export class Phase8Controller {
   private async rollbackFixIfNeeded(): Promise<void> {
     if (!this.isFixMode || !this.fixSnapshot || this.fixSnapshot.method === "none") return;
     const snap = this.fixSnapshot;
-    this.fixSnapshot = null; // tek seferlik
-    this.checkpointRef = null;
     const via = snap.method === "git" ? "checkpoint (git)" : "yedek (`~/.mycl/backups`)";
+    // Snapshot ref'ini restore'dan ÖNCE temizleme (sessiz-fallback denetimi): eski kod restore başarısız
+    // olsa bile ref'i null'lıyordu → "sonraki koşuda yeniden denenecek" YALANDI + repo regresyonlu kalıyordu.
+    let restored = false;
     try {
-      const ok = await restoreSnapshot(snap, this.state.project_root);
+      restored = await restoreSnapshot(snap, this.state.project_root);
+    } catch (err) {
+      log.error("phase-8", "rollback failed (exception) — repo regresyonlu durumda kaldı", err);
+    }
+    if (restored) {
+      this.fixSnapshot = null; // YALNIZ başarıda tek-seferlik temizle
+      this.checkpointRef = null;
       emitChatMessage(
         "system",
-        ok
-          ? `↩️ Başarısız/regresyonlu fix — değişiklikler ${via} üzerinden OTOMATİK geri alındı (MyCL state ve hata kataloğu korundu).`
-          : "⚠️ Otomatik geri alma kısmen başarısız (yedek bozulmuş olabilir) — sonraki koşuda yeniden denenecek.",
+        `↩️ Başarısız/regresyonlu fix — değişiklikler ${via} üzerinden OTOMATİK geri alındı (MyCL state ve hata kataloğu korundu).`,
       );
-    } catch (err) {
-      log.warn("phase-8", "rollback failed", err);
-      emitChatMessage("system", "⚠️ Otomatik geri alma başarısız — yedek erişilemedi.");
+    } else {
+      // Geri alma BAŞARISIZ → repo bozuk/regresyonlu fix'le KALDI. Sessizce "temiz" sanma: LOUD uyarı +
+      // ref'i KORU (sonraki koşu gerçekten yeniden deneyebilsin).
+      log.error("phase-8", "rollback FAILED — repo başarısız fix'le kaldı (ref korundu, yeniden denenebilir)", { method: snap.method });
+      emitChatMessage(
+        "system",
+        `🔴 Otomatik geri alma BAŞARISIZ (${via}) — proje başarısız/regresyonlu fix'le KALDI, bu hâliyle "temiz" DEĞİL. Değişiklikleri elle geri alman gerekebilir.`,
+      );
     }
   }
 
