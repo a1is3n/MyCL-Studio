@@ -119,6 +119,18 @@ entegre eder.
 - **Denetim Ajanı** (**🕵️**) — kullanıcının sorularıyla MyCL kendi çıktısını
   denetler; bir bulgunun MyCL'in kendi sorunu mu yoksa üretilen proje mi
   olduğunu ayırır.
+- **Faz-Katkı Raporu** — pipeline bitiminde mahkeme her fazın o koşuya katkı
+  yüzdesini değerlendirip Türkçe rapor olarak gösterir; düşük-katkılı fazlar
+  işaretlenir, kullanıcı gereksizleri kendisi budamaya karar verir (otomatik
+  budama yok).
+
+## Golden prototip
+
+Yeni bir proje Faz 17'ye kadar tamamlanıp **tüm gate'ler yeşil** olduğunda MyCL,
+projenin **tüm dosyalarını** (bağımlılık/build çıktıları hariç) o stack'in golden
+prototipi olarak `prototypes/<stack>/` altına kaydeder. Aynı stack'te yeni bir proje
+başlatıldığında (Faz 5 öncesi) bu doğrulanmış-yeşil prototip iskelet olarak getirilir;
+ana ajan sıfırdan değil çalışan baseline üzerine geliştirir.
 
 ## Stack profilleri
 
