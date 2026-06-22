@@ -383,16 +383,21 @@ export async function applyPrototype(state: State): Promise<boolean> {
     // Yalnız greenfield (mevcut kod yoksa). İterasyon/mevcut projeye uygulama → kirletir.
     if (await isExistingProject(state.project_root)) return false;
 
-    // Bayatlama kontrolü (YZLLM'in işaret ettiği risk) — görünür, sessiz değil.
+    // Bayatlama kontrolü (YZLLM'in işaret ettiği risk) — görünür, sessiz değil. + modül manifest'i (hızlı görünürlük).
     let staleNote = "";
+    let moduleNote = "";
     try {
       const meta = JSON.parse(await fs.readFile(prototypeMetaPath(stack), "utf-8")) as PrototypeMeta;
       if (isStale(meta, Date.now())) {
         const ageDays = Math.floor((Date.now() - meta.createdAt) / (24 * 60 * 60 * 1000));
         staleNote = ` ⚠️ Prototip ${ageDays} günlük (${MAX_AGE_DAYS}+) — bağımlılıklar bayat olabilir; ajan güncellemeli.`;
       }
+      if (meta.modules && meta.modules.length > 0) {
+        // Yeni-proje modül-araması: ajan + kullanıcı hangi sayfa/API'lerin HAZIR geldiğini görür → sıfırdan yazmaz.
+        moduleNote = `\n🔎 Hazır modüller (sıfırdan yazma; varsa yeniden kullan/genişlet): ${meta.modules.map((m) => m.name).join(", ")}.`;
+      }
     } catch {
-      /* meta yoksa yaş bilinmez — yine de kopyala (uyarısız) */
+      /* meta yoksa yaş/modül bilinmez — yine de kopyala (uyarısız) */
     }
 
     // Cache config-iskelet VEYA (yeşil koşuda kaydedilmişse) TAM çalışan proje içerir → tümünü kopyala,
@@ -407,7 +412,7 @@ export async function applyPrototype(state: State): Promise<boolean> {
     }).catch(() => {});
     emitChatMessage(
       "system",
-      `📦 ${stack} golden prototipi uygulandı — ana ajan sıfırdan değil, doğrulanmış prototip üzerine geliştirecek.${staleNote}`,
+      `📦 ${stack} golden prototipi uygulandı — ana ajan sıfırdan değil, doğrulanmış prototip üzerine geliştirecek.${staleNote}${moduleNote}`,
     );
     return true;
   } catch (err) {
