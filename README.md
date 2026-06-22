@@ -71,7 +71,7 @@ ortak controller'a dayanır:
 | 14 | Birim Testler | mechanical |
 | 15 | Entegrasyon Testleri | mechanical |
 | 16 | E2E Testler (UI varsa) | mechanical |
-| 17 | Sızma Testi / Pentest (web veya API hedefi varsa) | mechanical |
+| 17 | Sızma Testi — **otomatik koşmaz**, 🛡️ Güvenlik Taraması butonuyla manuel | — |
 
 ## Codegen backend'leri
 
@@ -114,8 +114,9 @@ entegre eder.
   orkestratörün çalışan akışı asla zorla kesilmez. Varsayılan **açık** (Ayarlar →
   müfettiş'ten kapatılabilir).
 - **Sızma testi / DAST** — `katana` (gezinme) + `nuclei` ile çalışan uygulama
-  aktif taranır (Faz 17 ve **🛡️ Güvenlik Taraması** butonu). Bulgular
-  önceliklenip otomatik düzeltme iterasyonlarına (Faz 3'ten) dönüşür.
+  aktif taranır. **Yalnız 🛡️ Güvenlik Taraması butonuyla manuel** çalışır (kullanıcı
+  onaylı; pipeline'da otomatik koşmaz — pentest ağır olduğundan yükü kullanıcı kontrol
+  eder). Bulgular önceliklenip otomatik düzeltme iterasyonlarına (Faz 3'ten) dönüşür.
 - **Denetim Ajanı** (**🕵️**) — kullanıcının sorularıyla MyCL kendi çıktısını
   denetler; bir bulgunun MyCL'in kendi sorunu mu yoksa üretilen proje mi
   olduğunu ayırır.

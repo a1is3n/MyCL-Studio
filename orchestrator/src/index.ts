@@ -46,7 +46,6 @@ import { detectInterruptedPhase2To9Pure } from "./resume-detection.js";
 import { SerialWorkQueue } from "./serial-queue.js";
 import {
   runDast,
-  deriveRoutesFromFiles,
   findingToTaskText,
   severityToPriority,
   dedupeFindingsByTemplate,
@@ -481,10 +480,8 @@ async function recordRungOutcome(_n: PhaseId, _success: boolean): Promise<void> 
 // Verify-up yükseltme sınırı: faz başına en çok 2 (maliyet emniyeti; merdiven zaten sonlu). İterasyon başında temizlenir.
 // Faz 13 güvenlik oto-çözüm sayacı (Oto-cevap açıkken otomatik fix denemesi sınırı; iterasyon başında sıfırlanır).
 let _securityAutoResolveCount = 0;
-// CASCADE-GUARD (YZLLM 2026-06-19): bu iterasyon bir güvenlik-bulgusu sistem-işinden mi doğdu. Faz 17 (Sızma
-// Testi) güvenlik-iterasyonunda bulguları YENİDEN kuyruğa YAZMAZ → bulgu→Faz3→Faz17→bulgu sonsuz-cascade'i kırılır
-// (normal iterasyon enqueue eder; onun fix-iterasyonları yalnız doğrular). runDevelopIteration başında set edilir.
-let _iterationIsSecurityFix = false;
+// (CASCADE-GUARD _iterationIsSecurityFix KALDIRILDI 2026-06-22 — Faz 17 otomatik pentest çıkarıldı;
+//  cascade riski yoktu artık. Manuel 🛡️ buton kendi cascade-guard'ını taşımaz, kullanıcı-tetikli.)
 // Yakınsama-kırıcı (YZLLM 2026-06-14: "MyCL'e yakınsama-kırıcı ekle"): güvenlik fix'leri bulguları AZALTMIYORSA
 // sonsuz döngüye girme. _securityAutoResolveCount iterasyon başında sıfırlanır (deep-solution yeni iterasyon açınca
 // cap hiç dolmaz) → bu ikili İTERASYONDAN BAĞIMSIZ kalıcı; yalnız proje açılışında / Faz 13 çözülünce sıfırlanır.
@@ -2538,8 +2535,6 @@ async function runDevelopIteration(
     emitError("no active project", null);
     return;
   }
-  // Cascade-guard: seed'lenmiş başlangıç = güvenlik-bulgusu sistem-işi → Faz 17 bu iterasyonda re-enqueue YAPMAZ.
-  _iterationIsSecurityFix = Boolean(opts?.seedIntent);
   // İzolasyon (YZLLM 2026-06-15, canlı test #2): bu, iş-listesindeki TEK işi işleyen
   // iterasyon → tüm fazlar (1..9) konuşma geçmişini KATMASIN, yoksa orijinal çok-bug'lı
   // mesaj sızıp işleri birleştirir. Bayrak state üzerinden advanceToNextPhase'e taşınır.
@@ -4391,58 +4386,20 @@ async function enqueueSecurityFixTask(projectRoot: string, text: string): Promis
  * doğduysa re-enqueue YAPILMAZ (bulgu→Faz3→Faz17→bulgu sonsuz döngüsü kırılır; yalnız doğrular).
  */
 async function runPhase17Pentest(
-  state: State,
-  config: MyclConfig,
+  _state: State,
+  _config: MyclConfig,
 ): Promise<{ status: PhaseStatus; partial: boolean }> {
-  emitPhaseRunning("🔪 Faz 17: Sızma Testi (pentest)…", "katana+nuclei — yalnız localhost");
-  try {
-    await ensureDevServerForReview(state, config).catch((e) =>
-      log.warn("phase-17", "dev server ensure failed (pentest yine dener)", e),
-    );
-    // İş 3 (araç atlanamaz): pentest araçlarını garanti et — yoksa kur (sessiz skip yok).
-    await ensureSecurityTools(["nuclei", "katana"]);
-    // İŞ 1 (YZLLM 2026-06-20): Faz 17 pentest YALNIZ bu iterasyonda değişen işe scope'lanır.
-    // changed_scope'tan route türet; çıkarsa scoped tara, çıkmazsa (non-Next / eşlenemez) full
-    // (kuşkuda dahil et). Tüm-proje + güncel-CVE taraması ayrı iş → 🛡️ Güvenlik Taraması butonu.
-    const scopeRoutes = deriveRoutesFromFiles(state.changed_scope?.files ?? []);
-    if (scopeRoutes.length > 0) {
-      emitChatMessage(
-        "system",
-        `🔪 Faz 17 yalnız değişen işe scope'landı: ${scopeRoutes.join(", ")} (tüm proje için 🛡️ Güvenlik Taraması).`,
-      );
-    }
-    // Pentest sırasında runtime-error-watcher'ı sustur (saldırı trafiği=hata değil; flood+çevirmen-boğulma+ısınma önle).
-    setPentestActive(true);
-    const res = await runDast(state, { scopeRoutes }).finally(() => setPentestActive(false));
-    emitChatMessage("system", res.summary_tr);
-    if (res.ok) {
-      if (_iterationIsSecurityFix) {
-        const remaining = res.findings_count ?? 0;
-        emitChatMessage(
-          "system",
-          remaining > 0
-            ? `🔪 Sızma Testi (güvenlik-fix doğrulaması): ${remaining} bulgu hâlâ var — cascade önlemek için OTOMATİK yeni iş AÇILMADI (gerekirse 🛡️ butonuyla yeniden tara).`
-            : "🔪 Sızma Testi: güvenlik-fix sonrası bu yüzeyde aktif bulgu kalmadı.",
-        );
-      } else {
-        const n = await enqueueSecurityFindings(state.project_root, res.summary, "Sızma Testi (Faz 17)");
-        if (n === 0) emitChatMessage("system", "🔪 Faz 17 Sızma Testi: aktif zafiyet bulunmadı (temiz).");
-      }
-    }
-    // YZLLM 2026-06-20 (DÜZELTME): Faz 17 YEŞİL ANCAK pentest TAM koşup HİÇ bulgu yoksa ("bulgularını fix
-    // etmeden Faz 17 yeşil olamaz"). YEŞİL ("complete", partial=false) = res.ok + 0 bulgu.
-    //  • bulgu>0 (zafiyet, fix gerek — kuyruğa girdi) → "error" + partial=true (verdict PARTIAL).
-    //  • timeout (eksik tarama, temiz doğrulanamaz) → "error" + partial=true.
-    //  • koşamadı (server/nuclei yok = ENV/skip, app suçu değil — semgrep-skip gibi) → "error" sidebar ama
-    //    partial=FALSE (verdict'i cezalandırma; tool/env eksik). (Faz 17 has_web_target'ta koşar — web VEYA API.)
-    const findings = res.findings_count ?? 0;
-    if (res.ok && findings === 0) return { status: "complete", partial: false };
-    if (res.ok && findings > 0) return { status: "error", partial: true };
-    if (res.error === "timeout") return { status: "error", partial: true };
-    return { status: "error", partial: false }; // koşamadı (env) → kırmızı ama verdict cezalanmaz
-  } finally {
-    emitPhaseIdle();
-  }
+  // YZLLM 2026-06-22: pentest Faz 17'den ÇIKARILDI. Otomatik pipeline'da çok ağırdı (katana/nuclei +
+  // dev-server + headed Chromium = makine ısınması). Sızma testi artık YALNIZ "🛡️ Güvenlik Taraması"
+  // butonuyla MANUEL koşar (handleRunDastRequest — kullanıcı onaylı, yükü kullanıcı kontrol eder).
+  // DAST motoru + buton aynen korunur; yalnız OTOMATİK Faz-17 tetiği kalktı → Faz 17 no-op (pipeline
+  // temiz tamamlanır, ısınma yok).
+  emitChatMessage(
+    "system",
+    "🔪 Faz 17 (Sızma Testi) otomatik koşmaz — pentest artık **🛡️ Güvenlik Taraması** butonuyla manuel " +
+      "çalışır (istediğinde; makine yükünü sen kontrol edersin).",
+  );
+  return { status: "complete", partial: false };
 }
 
 /**
