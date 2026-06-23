@@ -648,6 +648,9 @@ async function failPhase(n: PhaseId, ctrl?: FailReasonHolder): Promise<void> {
       }
     } catch (e) {
       log.warn("orchestrator", "mahkeme failPhase incelemesi hata (yutuldu → normal akış)", { error: String(e) });
+      // SESSİZ FALLBACK YOK (CLAUDE.md #4): mahkeme erişilemezse sistem denetimsiz akışa düşüyordu, kullanıcı
+      // bunu hiç görmüyordu → görünür kıl. Davranış (normal akış) korunur; yalnız bildirim eklenir.
+      emitChatMessage("system", "⚖️ Mahkeme (faz-hatası) erişilemedi — inceleme atlandı, normal otomatik akışa düşüldü (denetimsiz). Müfettişe ulaşılamıyorsa anahtar/bağlantıyı kontrol et.");
     }
   }
   if (!autoResolve && !mahkemeDiverted) {
@@ -720,6 +723,7 @@ async function failPhase(n: PhaseId, ctrl?: FailReasonHolder): Promise<void> {
         }
       } catch (e) {
         log.warn("orchestrator", "mahkeme döngü-incelemesi hata (yutuldu → normal akış)", { error: String(e) });
+        emitChatMessage("system", "⚖️ Mahkeme (döngü-incelemesi) erişilemedi — inceleme atlandı, normal akışa düşüldü (denetimsiz).");
       }
     }
   }
@@ -2126,6 +2130,7 @@ async function executeAgentDecision(
             log.warn("orchestrator", "mahkeme clarify-incelemesi hata (yutuldu → insana sor)", {
               error: String(e),
             });
+            emitChatMessage("system", "⚖️ Mahkeme (netleştirme) erişilemedi — güvenli tarafta kaldım, soruyu sana yönelttim (denetimsiz).");
           }
         }
       }
@@ -4148,6 +4153,8 @@ async function advanceToNextPhaseInner(from: PhaseId): Promise<void> {
               }
             } catch (e) {
               log.warn("orchestrator", "mahkeme Faz 13 incelemesi hata (yutuldu → proceed)", { error: String(e) });
+              // EN KRİTİK bypass: güvenlik bulgusu mahkeme hatasında DENETİMSİZ geçiyor → mutlaka görünür.
+              emitChatMessage("system", "⚖️ Mahkeme (Faz 13 GÜVENLİK incelemesi) erişilemedi — güvenlik bulgusu DENETİMSİZ geçti (proceed). En kritik bypass; raporu/bulguyu elle incele.");
             }
           }
           if (secMahkemeAction === "escalate") {
@@ -4353,6 +4360,7 @@ async function advanceToNextPhaseInner(from: PhaseId): Promise<void> {
           } catch (e) {
             // Mahkeme hatası → güvenli varsayılan proceed (mevcut davranış korunur; mahkeme akışı BOZMAZ).
             log.warn("orchestrator", "mahkeme gate-incelemesi hata (yutuldu → proceed)", { error: String(e) });
+            emitChatMessage("system", "⚖️ Mahkeme (gate-incelemesi) erişilemedi — bulgu denetimsiz geçti (proceed).");
           }
         }
         if (mahkemeAction === "suppress") {
