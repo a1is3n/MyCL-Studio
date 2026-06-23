@@ -14,11 +14,14 @@
 // döngüsüne bağlama (checkpoint hook) + müdahale-seçimi (mekanik taban/asimetrik eşik) +
 // tecrübe katmanı + API-paritesi = sonraki aşamalar.
 
+import type Anthropic from "@anthropic-ai/sdk";
 import { readFile } from "node:fs/promises";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { runClaudeCli } from "./cli-run.js";
 import { runReasoning } from "./llm-reasoning.js";
+import { runTurn, type ApiMessage } from "./claude-api.js";
+import { executeTool, TOOLS_CODEGEN, type ToolContext } from "./tool-handlers.js";
 import { READ_ONLY_DISALLOWED_TOOLS } from "./tool-policy.js";
 import { modelForTier } from "./model-catalog.js";
 import { decideIntervention, type InterventionSignals, type InterventionDecision } from "./inspector-trigger.js";
@@ -40,6 +43,108 @@ export function inspectorClaudeEnv(config: MyclConfig): Record<string, string> |
   if (backendForRole(config, "main") !== "api") return undefined;
   const key = claudeKeyForRole(config.api_keys, "main")?.trim();
   return key ? { ANTHROPIC_API_KEY: key } : undefined;
+}
+
+// Müfettiş SALT-OKUNUR araç seti (kanıt-toplama): Write/Edit YOK (müfettiş yargılar, değiştirmez).
+const INSPECTOR_TOOLS = TOOLS_CODEGEN.filter((t) =>
+  ["Read", "Grep", "Glob", "Bash"].includes((t as { name: string }).name),
+);
+const MAX_INSPECTOR_SDK_TURNS = 25; // araç-döngüsü tavanı (runaway-backstop; verdict birkaç turda gelir)
+const TOOL_RESULT_CAP = 12_000; // tool_result token-patlamasını önle (codegen deseni)
+
+/** assistant content'ten düz metni çıkar (verdict JSON metni text-block'larda gelir). SAF (test-edilebilir). */
+export function extractText(content: Anthropic.MessageParam["content"]): string {
+  if (typeof content === "string") return content;
+  return content
+    .filter((b) => (b as { type?: string }).type === "text")
+    .map((b) => (b as { text?: string }).text ?? "")
+    .join("")
+    .trim();
+}
+
+/**
+ * MÜFETTİŞ TURU — BACKEND-AWARE (tam API-paritesi). CLI/abonelik → `claude` binary (runClaudeCli, salt-okunur
+ * tool'lar). API-modu + Claude anahtarı → SDK ARAÇ-DÖNGÜSÜ (binary'siz; runTurn ↔ executeTool ile bizzat
+ * Read/Grep/Glob/Bash çalıştırıp kanıt toplar). Her ikisi de Claude/Sonnet (çapraz-aile). Müfettiş YALNIZ
+ * yargılar → Write/Edit yok; AskUserQuestion yok (müfettiş insana mahkeme-kanalından gider, tool'la değil).
+ */
+async function runInspectorTurn(
+  config: MyclConfig,
+  opts: { systemPrompt: string; userMessage: string; projectRoot: string; modelId: string; effort?: string },
+): Promise<{ ok: boolean; text: string; error?: string }> {
+  const env = inspectorClaudeEnv(config);
+  const apiKey = env?.ANTHROPIC_API_KEY;
+  if (apiKey) {
+    // API-modu + Claude anahtarı → SDK araç-döngüsü (claude binary gerekmez).
+    return runInspectorSdkLoop(config, apiKey, opts);
+  }
+  // CLI/abonelik → claude binary. env undefined (abonelik) → ambient Claude auth; varsa extraEnv ile Claude key.
+  const res = await runClaudeCli({
+    systemPrompt: opts.systemPrompt,
+    userMessage: opts.userMessage,
+    modelId: opts.modelId,
+    cwd: opts.projectRoot,
+    effort: opts.effort,
+    allowedTools: ["Read", "Grep", "Glob", "Bash"],
+    disallowedTools: READ_ONLY_DISALLOWED_TOOLS,
+    extraEnv: env,
+  });
+  return { ok: res.ok, text: res.text, error: res.error };
+}
+
+/** Müfettiş SDK araç-döngüsü: runTurn ↔ executeTool (salt-okunur) loop → final metin (verdict). Fail-closed:
+ *  üretemezse/tavan aşılırsa ok:false → caller (parseVerdict yoksa) insana yükseltir. */
+async function runInspectorSdkLoop(
+  config: MyclConfig,
+  apiKey: string,
+  opts: { systemPrompt: string; userMessage: string; projectRoot: string; modelId: string; effort?: string },
+): Promise<{ ok: boolean; text: string; error?: string }> {
+  const ctx: ToolContext = { project_root: opts.projectRoot };
+  const messages: ApiMessage[] = [{ role: "user", content: opts.userMessage }];
+  let lastText = "";
+  for (let turn = 0; turn < MAX_INSPECTOR_SDK_TURNS; turn++) {
+    let r;
+    try {
+      r = await runTurn(
+        config,
+        apiKey,
+        {
+          messages,
+          system: opts.systemPrompt,
+          model: opts.modelId,
+          tools: INSPECTOR_TOOLS,
+          max_tokens: 8192,
+          effortOverride: opts.effort, // CLI --effort paritesi (max)
+          // role VERİLMEZ + noZaiFallback → çapraz-aile Claude korunur (z.ai'ye yönlenmez VE account-error'da
+          // z.ai'ye düşmez → erişilemezse fail-closed escalate; default z.ai key'i olan kullanıcıda bile güvenli).
+          noZaiFallback: true,
+        },
+        () => {},
+      );
+    } catch (e) {
+      return { ok: false, text: lastText, error: String(e) };
+    }
+    messages.push({ role: "assistant", content: r.assistantContent });
+    const turnText = extractText(r.assistantContent);
+    if (turnText) lastText = turnText;
+    if (r.toolUses.length === 0) return { ok: true, text: lastText }; // model durdu → verdict hazır
+    const toolResults: Anthropic.MessageParam["content"] = [];
+    for (const tu of r.toolUses) {
+      const result = await executeTool(tu.name, tu.input as Record<string, unknown>, ctx).catch((e) => ({
+        content: `tool error: ${String(e)}`,
+        is_error: true,
+      }));
+      toolResults.push({
+        type: "tool_result",
+        tool_use_id: tu.id,
+        content: String(result.content).slice(0, TOOL_RESULT_CAP),
+        is_error: result.is_error,
+      });
+    }
+    messages.push({ role: "user", content: toolResults });
+  }
+  log.warn("inspector", "SDK araç-döngüsü tavanı aştı", { turns: MAX_INSPECTOR_SDK_TURNS });
+  return { ok: !!lastText.trim(), text: lastText, error: lastText.trim() ? undefined : "müfettiş SDK döngüsü tavanı aştı (verdict yok)" };
 }
 
 /** Müfettiş modeli: en iyi SONNET (çapraz-aile çeşitlilik). Orkestratör en iyi Opus'tur. */
@@ -66,8 +171,6 @@ export interface InspectorContext {
   /** RECALL (Parça 2): geçmiş benzer vakalardan dersler — İPUCU (iddia, hakikat değil). Müfettiş bunları
    *  KENDİ kanıtıyla yeniden doğrular (yanlış ders zehirlemesin); bağımsızlığını korur (kör-kabul YOK). */
   priorExperience?: string;
-  /** API-paritesi: müfettişin claude CLI'sına geçilecek Claude auth env'i (API-modunda; inspectorClaudeEnv). */
-  inspectorEnv?: Record<string, string>;
 }
 
 /** RECALL dersleri prompt'a uygun tek string'e çevir (güçlü/zayıf etiketli). */
@@ -159,6 +262,7 @@ export function parseVerdict(text: string): InspectorVerdict | null {
 
 /** Müfettiş tek-geçiş: Sonnet, kanıt-toplayan (Read/Grep/Bash), bağımsız vantaj → verdict. */
 export async function runInspectorPass(
+  config: MyclConfig,
   ctx: InspectorContext,
   priorOrchestratorDefense?: string,
 ): Promise<InspectorVerdict> {
@@ -205,15 +309,12 @@ export async function runInspectorPass(
     .filter(Boolean)
     .join("\n\n");
 
-  const res = await runClaudeCli({
+  const res = await runInspectorTurn(config, {
     systemPrompt: system,
     userMessage: user,
+    projectRoot: ctx.projectRoot,
     modelId: INSPECTOR_MODEL_DEFAULT,
-    cwd: ctx.projectRoot,
     effort: "max",
-    allowedTools: ["Read", "Grep", "Glob", "Bash"], // bizzat kanıt-toplama (yazma/alt-ajan yasak)
-    disallowedTools: READ_ONLY_DISALLOWED_TOOLS,
-    extraEnv: ctx.inspectorEnv, // API-paritesi: API-modunda Claude auth (abonelikte undefined)
   });
   if (!res.ok || !res.text.trim()) {
     // Müfettiş üretemedi → KÖRü körüne "agree" DEME (sessiz-gömme). Kuşkuda insana.
@@ -275,7 +376,7 @@ export async function runScientistsDebate(
   config: MyclConfig,
   ctx: InspectorContext,
 ): Promise<DebateOutcome> {
-  let verdict = await runInspectorPass(ctx);
+  let verdict = await runInspectorPass(config, ctx);
   let rounds = 0;
 
   // Müfettiş baştan katıldı:
@@ -308,7 +409,7 @@ export async function runScientistsDebate(
       };
     }
     // Müfettiş, savunmaya karşı YENİDEN değerlendirir (çerçeveyi özümsemeden).
-    verdict = await runInspectorPass(ctx, defense.text);
+    verdict = await runInspectorPass(config, ctx, defense.text);
     if (verdict.stance === "agree") {
       return {
         resolution: "inspector-conceded",
@@ -357,7 +458,7 @@ export async function runInspectorCheckpoint(
   const decision = decideIntervention(signals);
   if (decision.level === "none") return { acted: false, decision, highStakes: ctx.highStakes };
   if (decision.level === "flag") {
-    const verdict = await runInspectorPass(ctx);
+    const verdict = await runInspectorPass(config, ctx);
     return { acted: true, decision, outcome: verdict, highStakes: ctx.highStakes };
   }
   const outcome = await runScientistsDebate(config, ctx);
@@ -409,7 +510,6 @@ export async function inspectGateFinding(
     highStakes,
     projectRoot: opts.projectRoot,
     priorExperience,
-    inspectorEnv: inspectorClaudeEnv(config),
   };
   const signals: InterventionSignals = {
     isStuck: false,
@@ -503,15 +603,12 @@ export async function inspectClarify(
     `## ORKESTRATÖRÜN SORMAK İSTEDİĞİ\n${opts.question}\n\nSeçenekler: ${opts.options.join(" | ")}`,
     "Bu netleştirme GERÇEKTEN gerekli mi, yoksa orkestratör gereksiz mi soruyor? Bizzat kanıt topla, sonra karar ver.",
   ].join("\n\n");
-  const res = await runClaudeCli({
+  const res = await runInspectorTurn(config, {
     systemPrompt: system,
     userMessage: user,
+    projectRoot: opts.projectRoot,
     modelId: INSPECTOR_MODEL_DEFAULT,
-    cwd: opts.projectRoot,
     effort: "max",
-    allowedTools: ["Read", "Grep", "Glob", "Bash"], // bizzat kanıt toplama (yazma/alt-ajan yasak)
-    disallowedTools: READ_ONLY_DISALLOWED_TOOLS,
-    extraEnv: inspectorClaudeEnv(config), // API-paritesi: API-modunda Claude auth
   });
   if (!res.ok || !res.text.trim()) {
     log.warn("inspector", "clarify-incelemesi üretilemedi → ask (fail-closed)", { error: res.error });

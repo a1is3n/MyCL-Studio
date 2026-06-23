@@ -10,6 +10,7 @@ import {
   buildMahkemeLesson,
   lessonContradictsRuling,
   inspectorClaudeEnv,
+  extractText,
   type InspectorContext,
   type CheckpointResult,
   type DebateResolution,
@@ -208,5 +209,20 @@ describe("inspector · inspectorClaudeEnv (API-paritesi — müfettişe Claude a
   });
   it("API-modu ama Claude anahtarı yok → undefined (fail-closed; çapraz-aile sınırı)", () => {
     expect(inspectorClaudeEnv(cfg("api", ""))).toBeUndefined();
+  });
+});
+
+describe("inspector · extractText (SDK araç-döngüsü verdict-çıkarımı)", () => {
+  it("string content → aynen", () => {
+    expect(extractText("verdict metni")).toBe("verdict metni");
+  });
+  it("text-block'lar → birleştir + trim", () => {
+    expect(extractText([{ type: "text", text: "a" }, { type: "text", text: "b" }] as never)).toBe("ab");
+  });
+  it("yalnız tool_use blokları → '' (henüz verdict yok)", () => {
+    expect(extractText([{ type: "tool_use", id: "1", name: "Read", input: {} }] as never)).toBe("");
+  });
+  it("karışık (tool_use + text) → yalnız text", () => {
+    expect(extractText([{ type: "tool_use", id: "1", name: "Read", input: {} }, { type: "text", text: '{"stance":"agree"}' }] as never)).toBe('{"stance":"agree"}');
   });
 });

@@ -337,6 +337,12 @@ export interface RunTurnOptions {
    * davranış aynen (geçen apiKey+model claude'a gider). claude→z.ai fallback'ı da rolün z.ai key'ini kullanır.
    */
   role?: AgentRole;
+  /**
+   * z.ai fallback'ı KAPAT (YZLLM 2026-06-23): müfettiş ÇAPRAZ-AİLE gereği DAİMA Claude olmalı — Claude
+   * account-error'da z.ai'ye düşmek aileyi bozar (müfettiş=z.ai=orkestratörle aynı aile → çeşitlilik biter).
+   * true → claude erişilemezse z.ai'ye düşme, hatayı fırlat (caller fail-closed: insana yükseltir).
+   */
+  noZaiFallback?: boolean;
 }
 
 export interface TurnUsage {
@@ -717,7 +723,7 @@ export async function runTurn(
     // AYNI turu z.ai (GLM) ile tekrarla. Rol varsa rolün z.ai key'i (per-rol ?? default), yoksa default zai.
     // Birincil ZATEN z.ai idiyse fallback YOK (z.ai son halka; hatasını dürüstçe fırlat — sessiz yutma yok).
     const zaiKey = opts.role ? zaiKeyForRole(config.api_keys, opts.role) : config.api_keys.zai;
-    if (!primaryOpts.isZai && zaiKey && err instanceof ClaudeApiError && isApiAccountError(err.message)) {
+    if (!primaryOpts.isZai && !opts.noZaiFallback && zaiKey && err instanceof ClaudeApiError && isApiAccountError(err.message)) {
       const fallbackModel = glmModelFor(opts.model);
       emitChatMessage(
         "system",
