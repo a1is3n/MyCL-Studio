@@ -109,7 +109,12 @@ async function splitTasks(
       onText: (t) => emitClaudeStream({ sub: "text", text: t }),
       timeoutMs: 120_000,
     });
-    if (!res.ok) return null;
+    if (!res.ok) {
+      // CLI iş-bölme başarısız (sessiz-fallback denetimi): sessiz null → caller tek-iş'e düşer ama NEDEN
+      // (rate-limit/transient?) kaybolur. log.error ile izlenebilir kıl.
+      log.error("task-intake", "iş-bölme (CLI) başarısız — tek-iş'e düşülebilir", { error: res.error });
+      return null;
+    }
     text = res.text;
   } else {
     // z.ai Aşama 2 ⑤b: Sağlayıcı=Z.AI ise iş-bölme turu GLM'e (z.ai key+endpoint) gider; claude'da AYNEN korunur.

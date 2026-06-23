@@ -131,7 +131,14 @@ export async function refreshDevsSpecs(
     const specModel = specCli.model;
 
     // Bu iterasyonun iter-spec'i + dokunulan birimlerin mevcut page-spec'leri.
-    const iterSpec = await fs.readFile(outcome.iterSpecPath, "utf-8").catch(() => "");
+    const iterSpec = await fs.readFile(outcome.iterSpecPath, "utf-8").catch((e) => {
+      // errno-AYRIMI: ENOENT = iter-spec yok (meşru). Diğer hata = var ama okunamadı → "" ile inceltilmiş spec
+      // yazma riski → görünür kıl.
+      if ((e as { code?: string }).code !== "ENOENT") {
+        log.error("devs-spec-refresh", "iter-spec okunamadı (var ama erişilemez) — boş döndü, spec-inceltme riski", { error: String(e) });
+      }
+      return "";
+    });
     const unitIds = outcome.units.map((u) => `${u.type}:${u.key}`);
     const validUnitIds = new Set(unitIds);
     const pageSpecPaths = new Map<string, string>(); // unitId → page-spec.md yolu
@@ -212,7 +219,10 @@ export async function refreshDevsSpecs(
       `📝 Proje spec'i tazelendi (.mycl/spec.md)${pageCount ? ` + ${pageCount} sayfa-spec'i` : ""}.`,
     );
   } catch (err) {
-    log.warn("devs-spec-refresh", "refreshDevsSpecs failed (non-fatal)", err);
+    // spec tazeleme (sessiz-fallback denetimi): sessiz log.warn → bu turun spec'i güncellenmedi (yaşayan-dök
+    // bayat kalır). log.error + görünür.
+    log.error("devs-spec-refresh", "spec tazeleme başarısız — bu turun spec'i güncellenmedi (yaşayan-dök eksik)", err);
+    emitChatMessage("system", "⚠️ Spec tazeleme başarısız — yaşayan-dökümantasyon bu tur güncellenmemiş olabilir.");
     emitChatMessage("system", "⚠️ Spec tazeleme atlandı (beklenmedik hata) — ana akış etkilenmez.");
   } finally {
     emitPhaseIdle();

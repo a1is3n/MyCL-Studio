@@ -220,7 +220,10 @@ export async function extractModule(state: State, descriptor: ModuleDescriptor):
     );
     return true;
   } catch (err) {
-    log.warn("module-stock", "extractModule failed (non-fatal)", err);
+    // Modül stoklama (copyFile/writeFile) başarısız (sessiz-fallback denetimi): sessiz log.warn → modül
+    // yeniden-kullanım için KAYDEDİLMEDİ. log.error + görünür (disk/izin).
+    log.error("module-stock", "modül stoklanamadı (kopya/yazım hatası) — yeniden-kullanım için kaydedilmedi", err);
+    emitChatMessage("system", "⚠️ Modül stoklanamadı (disk/izin?) — yeniden-kullanılabilir baseline'a eklenmedi.");
     return false;
   }
 }
@@ -311,12 +314,16 @@ export async function listAvailableModules(stack?: string): Promise<ModuleSummar
           routes: m.routes ?? [],
           createdAt: m.createdAt,
         });
-      } catch {
-        /* bozuk manifest → atla */
+      } catch (e) {
+        // Bozuk manifest sessizce atlanıyordu → görünür kıl (N>0 bozuk = stok bozulmuş olabilir).
+        log.warn("module-stock", "bozuk modül manifesti atlandı (stoklu modül listelenemedi)", { error: String(e) });
       }
     }
     return out.slice(0, MAX_LISTED);
-  } catch {
+  } catch (e) {
+    // listAvailableModules gövdesi (readdir/iterasyon) — existsSync boş-stoğu zaten ayırır; buraya düşen
+    // GERÇEK hatadır (izin/IO) → sessiz [] yerine görünür kıl.
+    log.warn("module-stock", "modül-stoğu listelenemedi (readdir/iterasyon hatası) — boş döndü", { error: String(e) });
     return [];
   }
 }

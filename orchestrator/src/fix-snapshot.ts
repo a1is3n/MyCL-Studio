@@ -40,7 +40,11 @@ export interface FixSnapshot {
  */
 export async function snapshotBeforeAutofix(projectRoot: string, nowTs: number): Promise<FixSnapshot> {
   // 1. Git tercih edilir (ucuz, temiz ağaçta).
-  const cp1 = await createCheckpoint(projectRoot).catch(() => ({ ok: false as const, ref: undefined }));
+  const cp1 = await createCheckpoint(projectRoot).catch((e) => {
+    // Beklenmedik throw (git durumu okuma/spawn) sessizce {ok:false}'a düşüyordu → yedeğe geçiş NEDENSİZ. Görünür.
+    log.warn("fix-snapshot", "git checkpoint alınamadı (yedeğe düşülüyor)", { error: String(e) });
+    return { ok: false as const, ref: undefined };
+  });
   if (cp1.ok && "ref" in cp1 && cp1.ref) {
     emitChatMessage("system", "📌 Snapshot alındı (git) — bu adımda silinen/değişen dosyalar gerekirse geri alınabilir.");
     const snap: FixSnapshot = { method: "git", ref: cp1.ref };

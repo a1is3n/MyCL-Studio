@@ -630,9 +630,15 @@ export class Phase8Controller {
       try {
         await stat(p);
         techDebtPaths.push(p); // dosya hâlâ var → tech debt
-      } catch {
-        // dosya yok (silinmiş) — tech debt sayma
-        log.info("phase-8", "deleted file skipped from tech debt", { path: p });
+      } catch (e) {
+        // errno-AYRIMI (sessiz-fallback denetimi): yalnız ENOENT = silinmiş (tech-debt sayma). Belirsiz hata
+        // (EACCES/EIO) → "silinmiş" SANMAK tech-debt'i eksik sayar (false-clean) → kuşkuda DAHİL et (TUT).
+        if ((e as { code?: string }).code === "ENOENT") {
+          log.info("phase-8", "deleted file skipped from tech debt", { path: p });
+        } else {
+          log.warn("phase-8", "stat belirsiz — dosya tech-debt'te TUTULDU (kuşkuda dahil et)", { path: p, code: (e as { code?: string }).code });
+          techDebtPaths.push(p);
+        }
       }
     }
     const techDebtCount = techDebtPaths.length;
