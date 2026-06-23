@@ -7,6 +7,7 @@ import {
   parseClarifyVerdict,
   runInspectorCheckpoint,
   mahkemeRuling,
+  buildMahkemeLesson,
   type InspectorContext,
   type CheckpointResult,
   type DebateResolution,
@@ -137,5 +138,40 @@ describe("inspector · mahkemeRuling (BAĞLAYICI hüküm → eylem; güvenli eş
 
   it("tek-geçiş agree → proceed", () => {
     expect(mahkemeRuling(flagCp("agree")).action).toBe("proceed");
+  });
+});
+
+describe("inspector · buildMahkemeLesson (tecrübe RECORD — mahkeme→ders)", () => {
+  const debateRes = (resolution: DebateResolution): CheckpointResult => ({
+    acted: true,
+    decision: { level: "debate", reason: "x" },
+    outcome: { resolution, rounds: 2, summary: "özet", finalVerdict: { stance: "flag", reason: "r" } },
+  });
+  const flagRes = (stance: "agree" | "flag" | "escalate"): CheckpointResult => ({
+    acted: true,
+    decision: { level: "flag", reason: "x" },
+    outcome: { stance, reason: "r" },
+  });
+
+  it("escalate → null (çözülmedi → ders DEĞİL)", () => {
+    expect(
+      buildMahkemeLesson({ signature: "s", problem: "p", result: debateRes("escalate"), ruling: { action: "escalate", convened: true, summary: "x" }, ts: 1 }),
+    ).toBeNull();
+  });
+  it("toplanmadı (convened=false) → null", () => {
+    expect(
+      buildMahkemeLesson({ signature: "s", problem: "p", result: flagRes("agree"), ruling: { action: "proceed", convened: false, summary: "x" }, ts: 1 }),
+    ).toBeNull();
+  });
+  it("tam-tartışma suppress → lesson, verified=TRUE, false-positive ilkesi", () => {
+    const l = buildMahkemeLesson({ signature: "sig", problem: "p", result: debateRes("orchestrator-conceded"), ruling: { action: "suppress", convened: true, summary: "özet" }, ts: 9 });
+    expect(l?.verified).toBe(true);
+    expect(l?.principle).toMatch(/FALSE-POSITIVE/);
+    expect(l?.ts).toBe(9);
+  });
+  it("tek-geçiş agree→proceed → lesson, verified=FALSE (zayıf), gerçek-sorun ilkesi", () => {
+    const l = buildMahkemeLesson({ signature: "sig", problem: "p", result: flagRes("agree"), ruling: { action: "proceed", convened: true, summary: "s" }, ts: 1 });
+    expect(l?.verified).toBe(false);
+    expect(l?.principle).toMatch(/GERÇEK/);
   });
 });

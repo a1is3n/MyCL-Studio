@@ -22,6 +22,7 @@ import { runReasoning } from "./llm-reasoning.js";
 import { READ_ONLY_DISALLOWED_TOOLS } from "./tool-policy.js";
 import { modelForTier } from "./model-catalog.js";
 import { decideIntervention, type InterventionSignals, type InterventionDecision } from "./inspector-trigger.js";
+import { recordLesson, type Lesson } from "./experience-layer.js";
 import type { MyclConfig } from "./config.js";
 import { log } from "./logger.js";
 
@@ -527,4 +528,48 @@ export function mahkemeRuling(r: CheckpointResult): MahkemeRuling {
   const v = r.outcome;
   if (v.stance === "agree") return { action: "proceed", convened: true, summary: v.reason };
   return { action: "escalate", convened: true, summary: v.reason };
+}
+
+/**
+ * TECRÜBE KATMANI — RECORD (Parça 2, project_self_sufficiency_roadmap). Mahkeme bir bulguyu KARARA
+ * bağlayınca (suppress/proceed) dersi depola: sorun → KANITLI çözüm → ilke. Sonraki benzer sorunda
+ * recall edilir (RECALL artımı; orada YİNE doğrulanır — ders=iddia, hakikat değil). Kurallar:
+ *  - YALNIZ kararlı sonuç (convened + suppress/proceed). escalate (insana/çözülmedi) → ders DEĞİL.
+ *  - verified = TAM-TARTIŞMA (iki bilim insanı kanıtla hemfikir) → güçlü; tek-geçiş → zayıf öneri.
+ *  - Best-effort: ders kaydı ana akışı ASLA bozmaz (recordLesson kendi içinde yutar + loglar).
+ */
+/** SAF (test-edilebilir): mahkeme sonucundan Lesson kur, ya da kaydedilmeyecekse null. */
+export function buildMahkemeLesson(opts: {
+  signature: string;
+  problem: string;
+  result: CheckpointResult;
+  ruling: MahkemeRuling;
+  ts: number;
+}): Lesson | null {
+  if (!opts.ruling.convened || opts.ruling.action === "escalate") return null;
+  // verified = TAM-TARTIŞMA (DebateOutcome; iki bilim insanı kanıtla hemfikir) → güçlü; tek-geçiş → zayıf.
+  const debated = !!opts.result.outcome && "resolution" in opts.result.outcome;
+  const principle =
+    opts.ruling.action === "suppress"
+      ? "Bu bulgu-deseni FALSE-POSITIVE — mahkeme kanıtla doğruladı (fix gereksiz; benzeri için önce false-positive ihtimalini DOĞRULA)."
+      : "Bu bulgu-deseni GERÇEK kod sorunu — mahkeme proceed (fix gerekli).";
+  return {
+    signature: opts.signature,
+    problem: opts.problem.slice(0, 400),
+    resolution: opts.ruling.summary.slice(0, 500),
+    principle,
+    verified: debated,
+    ts: opts.ts,
+  };
+}
+
+export async function recordMahkemeLesson(opts: {
+  signature: string;
+  problem: string;
+  result: CheckpointResult;
+  ruling: MahkemeRuling;
+  ts: number;
+}): Promise<void> {
+  const lesson = buildMahkemeLesson(opts);
+  if (lesson) await recordLesson(lesson);
 }

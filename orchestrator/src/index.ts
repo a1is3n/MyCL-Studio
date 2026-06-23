@@ -103,7 +103,7 @@ import { isClaudeAvailable } from "./codegen/cli-backend.js";
 import { discoverModelsViaWeb, verifyModelCallable } from "./model-discovery.js";
 import { ensureAgentSkills } from "./skills-setup.js";
 import { runGateAutofix } from "./gate-autofix.js";
-import { inspectGateFinding, mahkemeRuling, inspectClarify, type MahkemeAction } from "./inspector.js";
+import { inspectGateFinding, mahkemeRuling, inspectClarify, recordMahkemeLesson, type MahkemeAction } from "./inspector.js";
 import { Phase0Controller } from "./phase-0.js";
 import { snapshotPrototype } from "./prototype-cache.js";
 import { runPhaseContributionReport } from "./phase-contribution.js";
@@ -605,6 +605,14 @@ async function failPhase(n: PhaseId, ctrl?: FailReasonHolder): Promise<void> {
         errors: ctrl?.lastFailReason ?? message,
       });
       const ruling = mahkemeRuling(insp);
+      // TECRÜBE-RECORD (Parça 2): mahkeme kararını derse çevir (sorun→kanıtlı-çözüm→ilke; best-effort).
+      await recordMahkemeLesson({
+        signature: `Faz ${n} ${(ctrl?.lastFailReason ?? message).slice(0, 100)}`,
+        problem: ctrl?.lastFailReason ?? message,
+        result: insp,
+        ruling,
+        ts: Date.now(),
+      });
       if (ruling.convened && ruling.action !== "proceed") {
         // FROZEN-GOAL (escalate-stall fix, canlı Arcelik_BO 2026-06-22): bu noktada otoCevap ZATEN açık
         // (mahkeme yalnız autoResolve=otoCevap iken koşar). Oto-modda askq'da BLOKLAMAK = SESSİZ STALL
@@ -672,6 +680,14 @@ async function failPhase(n: PhaseId, ctrl?: FailReasonHolder): Promise<void> {
           loop: { attempts: priorCount },
         });
         const ruling = mahkemeRuling(insp);
+        // TECRÜBE-RECORD (Parça 2): döngü-mahkemesi kararını derse çevir (best-effort).
+        await recordMahkemeLesson({
+          signature: `Faz ${n} ${(ctrl?.lastFailReason ?? message).slice(0, 100)}`,
+          problem: ctrl?.lastFailReason ?? message,
+          result: insp,
+          ruling,
+          ts: Date.now(),
+        });
         if (ruling.convened) {
           await appendAuditModule(runtime.state.project_root, {
             ts: Date.now(),
