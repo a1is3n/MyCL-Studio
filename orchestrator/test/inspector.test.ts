@@ -9,6 +9,7 @@ import {
   mahkemeRuling,
   buildMahkemeLesson,
   lessonContradictsRuling,
+  inspectorClaudeEnv,
   type InspectorContext,
   type CheckpointResult,
   type DebateResolution,
@@ -193,5 +194,19 @@ describe("inspector · lessonContradictsRuling (tecrübe RETRACT — yanlış-de
   it("hüküm escalate / toplanmadı → asla retract (false)", () => {
     expect(lessonContradictsRuling(real, { action: "escalate", convened: true, summary: "x" })).toBe(false);
     expect(lessonContradictsRuling(fp, { action: "proceed", convened: false, summary: "x" })).toBe(false);
+  });
+});
+
+describe("inspector · inspectorClaudeEnv (API-paritesi — müfettişe Claude auth)", () => {
+  const cfg = (backend: string, mainKey: string) =>
+    ({ agent_backends: { main: backend }, api_keys: { main: mainKey, translator: "t" } } as unknown as Parameters<typeof inspectorClaudeEnv>[0]);
+  it("CLI/abonelik → undefined (sürpriz API faturası yok, claudeSpawnEnv yeterli)", () => {
+    expect(inspectorClaudeEnv(cfg("cli", "claude-key"))).toBeUndefined();
+  });
+  it("API-modu + Claude anahtarı → ANTHROPIC_API_KEY (müfettiş auth olur)", () => {
+    expect(inspectorClaudeEnv(cfg("api", "claude-key"))).toEqual({ ANTHROPIC_API_KEY: "claude-key" });
+  });
+  it("API-modu ama Claude anahtarı yok → undefined (fail-closed; çapraz-aile sınırı)", () => {
+    expect(inspectorClaudeEnv(cfg("api", ""))).toBeUndefined();
   });
 });

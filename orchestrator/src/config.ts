@@ -538,7 +538,7 @@ export function zaiKeyForRole(keys: ApiKeys, role: AgentRole): string | undefine
 }
 
 /** Rolün claude key'i (provider claude iken). */
-function claudeKeyForRole(keys: ApiKeys, role: AgentRole): string {
+export function claudeKeyForRole(keys: ApiKeys, role: AgentRole): string {
   return role === "translator"
     ? keys.translator
     : role === "orchestrator"

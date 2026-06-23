@@ -23,8 +23,23 @@ import { READ_ONLY_DISALLOWED_TOOLS } from "./tool-policy.js";
 import { modelForTier } from "./model-catalog.js";
 import { decideIntervention, type InterventionSignals, type InterventionDecision } from "./inspector-trigger.js";
 import { recordLesson, recallLessons, retractLesson, type Lesson } from "./experience-layer.js";
-import type { MyclConfig } from "./config.js";
+import { backendForRole, claudeKeyForRole, type MyclConfig } from "./config.js";
 import { log } from "./logger.js";
+
+/**
+ * API-PARİTESİ (Parça 2 kuyruk, YZLLM "API'yi de destekle"): müfettiş runClaudeCli ile `claude` binary'sini
+ * sürer (araç-kullanan kanıt-toplama). Abonelik modunda binary login'le çalışır; AMA API-modunda binary
+ * login DEĞİL → claudeSpawnEnv Claude anahtarını ENJEKTE ETMEZ → müfettiş auth'suz kalır (fail-closed
+ * escalate, değeri kaybolur). Fix: API-modunda Claude anahtarını CLI'ya extraEnv ile geç. Müfettiş BİLEREK
+ * Claude (çapraz-aile) → claudeKeyForRole HER ZAMAN Claude anahtarını verir (z.ai değil). Guard backendForRole
+ * "api" → abonelik modunda GEÇMEZ (sürpriz API faturası yok). Claude anahtarı yoksa (saf-z.ai/abonelik-yok)
+ * → undefined → claudeSpawnEnv (abonelik) ya da fail-closed (çapraz-aile tasarım sınırı: Claude erişimi şart).
+ */
+export function inspectorClaudeEnv(config: MyclConfig): Record<string, string> | undefined {
+  if (backendForRole(config, "main") !== "api") return undefined;
+  const key = claudeKeyForRole(config.api_keys, "main")?.trim();
+  return key ? { ANTHROPIC_API_KEY: key } : undefined;
+}
 
 /** Müfettiş modeli: en iyi SONNET (çapraz-aile çeşitlilik). Orkestratör en iyi Opus'tur. */
 export const INSPECTOR_MODEL_DEFAULT = "claude-sonnet-4-6";
@@ -50,6 +65,8 @@ export interface InspectorContext {
   /** RECALL (Parça 2): geçmiş benzer vakalardan dersler — İPUCU (iddia, hakikat değil). Müfettiş bunları
    *  KENDİ kanıtıyla yeniden doğrular (yanlış ders zehirlemesin); bağımsızlığını korur (kör-kabul YOK). */
   priorExperience?: string;
+  /** API-paritesi: müfettişin claude CLI'sına geçilecek Claude auth env'i (API-modunda; inspectorClaudeEnv). */
+  inspectorEnv?: Record<string, string>;
 }
 
 /** RECALL dersleri prompt'a uygun tek string'e çevir (güçlü/zayıf etiketli). */
@@ -191,6 +208,7 @@ export async function runInspectorPass(
     effort: "max",
     allowedTools: ["Read", "Grep", "Glob", "Bash"], // bizzat kanıt-toplama (yazma/alt-ajan yasak)
     disallowedTools: READ_ONLY_DISALLOWED_TOOLS,
+    extraEnv: ctx.inspectorEnv, // API-paritesi: API-modunda Claude auth (abonelikte undefined)
   });
   if (!res.ok || !res.text.trim()) {
     // Müfettiş üretemedi → KÖRü körüne "agree" DEME (sessiz-gömme). Kuşkuda insana.
@@ -386,6 +404,7 @@ export async function inspectGateFinding(
     highStakes,
     projectRoot: opts.projectRoot,
     priorExperience,
+    inspectorEnv: inspectorClaudeEnv(config),
   };
   const signals: InterventionSignals = {
     isStuck: false,
@@ -452,7 +471,6 @@ export async function inspectClarify(
   config: MyclConfig,
   opts: { projectRoot: string; intent: string; trajectory: string; question: string; options: string[] },
 ): Promise<ClarifyRuling> {
-  void config; // müfettiş SABİT model (çapraz-aile Sonnet); config ileride API-paritesi için.
   const protocol = await loadDebateProtocol();
   const system = [
     protocol,
@@ -488,6 +506,7 @@ export async function inspectClarify(
     effort: "max",
     allowedTools: ["Read", "Grep", "Glob", "Bash"], // bizzat kanıt toplama (yazma/alt-ajan yasak)
     disallowedTools: READ_ONLY_DISALLOWED_TOOLS,
+    extraEnv: inspectorClaudeEnv(config), // API-paritesi: API-modunda Claude auth
   });
   if (!res.ok || !res.text.trim()) {
     log.warn("inspector", "clarify-incelemesi üretilemedi → ask (fail-closed)", { error: res.error });
