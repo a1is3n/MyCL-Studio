@@ -370,7 +370,17 @@ export async function restoreCheckpoint(projectRoot: string, ref: string): Promi
     cleanArgs.push("-e", p);
   }
   const cl = await runGitWrite(projectRoot, cleanArgs);
-  return co.code === 0 && cl.code === 0;
+  const ok = co.code === 0 && cl.code === 0;
+  if (!ok) {
+    // restoreCheckpoint başarısız (sessiz-fallback denetimi): co/cl stderr'i yutuluyordu → caller false
+    // alır ama NEDEN bilmez (rollback eksik = repo bozuk kalabilir). Görünür kıl.
+    log.error("git", "restoreCheckpoint başarısız — rollback eksik olabilir (repo bozuk kalabilir)", {
+      coCode: co.code,
+      clCode: cl.code,
+      stderr: `${co.stderr ?? ""} ${cl.stderr ?? ""}`.trim().slice(0, 200),
+    });
+  }
+  return ok;
 }
 
 /** Bir yolun `.mycl`/`error_folder` (MyCL state + hata kataloğu) altında mı. */

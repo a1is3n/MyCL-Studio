@@ -13,6 +13,7 @@ import { isAbsolute, join } from "node:path";
 import { getChangedFiles } from "../git.js";
 import { readAuditLog } from "../audit.js";
 import { log } from "../logger.js";
+import { emitChatMessage } from "../ipc.js";
 import { buildReverseImportGraph, getAffected } from "./dep-graph/index.js";
 import { hasSourceExt } from "./evidence.js";
 
@@ -122,7 +123,10 @@ export async function computeChangedScope(
       }
     }
   } catch (err) {
-    log.warn("fix/scope", "blast-radius failed (changed files only)", err);
+    // blast-radius (sessiz-fallback denetimi): graf inşası başarısızsa scope yalnız değişen-dosyalara DARALIR →
+    // etkilenen (import-eden) dosyalar taranmadan gate geçer (false-green riski). log.warn→log.error + görünür kıl.
+    log.error("fix/scope", "blast-radius (ters-import grafiği) başarısız — scope yalnız değişen-dosyalar (etkilenen dosyalar atlanmış olabilir)", err);
+    emitChatMessage("system", "⚠️ Etki-yarıçapı hesaplanamadı — gate yalnız değişen dosyalara koştu; import-eden dosyalar atlanmış olabilir.");
   }
 
   return { files: [...all], available: true, since };

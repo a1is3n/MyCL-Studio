@@ -10,7 +10,7 @@ import type { ProductionBackend } from "./base/production-schema-controller.js";
 import { createProductionSchemaBackend } from "./base/production-schema-cli-backend.js";
 import type { ToolDef } from "./claude-api.js";
 import type { MyclConfig } from "./config.js";
-import { emitError } from "./ipc.js";
+import { emitError, emitChatMessage } from "./ipc.js";
 import { log } from "./logger.js";
 import { substitute } from "./template-engine.js";
 import {
@@ -264,7 +264,10 @@ export class Phase3Controller {
           reason: String(outcome.writeInput.needed_optional_phases_reason ?? ""),
         });
       } catch (err) {
-        log.warn("phase-3", "decision record write failed (non-blocking)", err);
+        // ADR karar-kaydı (sessiz-fallback denetimi): müfettiş/orkestratör trajectory'sini besler → sessiz
+        // kayıp bağlam-eksiği doğurur (tekrarlayan = disk/izin). log.warn→log.error + görünür.
+        log.error("phase-3", "faz-kapsamı karar kaydı (ADR) yazılamadı — orkestratör belleği/trajectory eksik kalabilir", err);
+        emitChatMessage("system", "⚠️ Faz 3: faz-kapsamı karar kaydı yazılamadı (disk/izin?) — orkestratör belleği eksik kalabilir.");
       }
       log.info("phase-3", "complete");
       return "complete";
