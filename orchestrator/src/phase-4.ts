@@ -233,7 +233,10 @@ export class Phase4Controller {
         buildRelevantEngineeringBrief(this.config, this.state, this.state.intent_summary),
         buildConversationContext(this.config, this.state, { recentLanguage: "en" })
           .then((c) => renderConversationSection(c, { forMainAgent: true }))
-          .catch(() => ""),
+          .catch((e) => {
+            log.warn("phase-4", "konuşma-bağlamı kurulamadı — prompt bölümü boş (degraded)", { error: String(e) });
+            return "";
+          }),
       ]);
       systemPrompt = substitute(tmpl, {
         INTENT_SUMMARY: this.state.intent_summary,

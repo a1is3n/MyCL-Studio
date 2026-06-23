@@ -174,7 +174,12 @@ async function readExistingHelpPages(projectRoot: string): Promise<HelpPage[]> {
   try {
     const arr = JSON.parse(await fs.readFile(join(projectRoot, HELP_PAGES_REL), "utf-8"));
     return Array.isArray(arr) ? arr.filter((p) => p && typeof p.route === "string" && typeof p.updated_at === "string") : [];
-  } catch {
+  } catch (e) {
+    // errno-AYRIMI: ENOENT = help-pages.json yok (meşru boş). Parse-hatası/EACCES = bozuk/erişilemez → görünür
+    // (tarih-karşılaştırması güvenilmez → kılavuz gereksiz yeniden-çekilebilir/bayat kalabilir).
+    if ((e as { code?: string }).code !== "ENOENT") {
+      log.warn("living-docs", "help-pages.json okunamadı/parse edilemedi (bozuk?) — tarih karşılaştırması güvenilmez", { error: String(e) });
+    }
     return [];
   }
 }

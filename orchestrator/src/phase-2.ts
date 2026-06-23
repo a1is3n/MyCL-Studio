@@ -186,7 +186,10 @@ export class Phase2Controller {
       const tmpl = await readFile(this.spec.prompt_template_path!, "utf-8");
       const convSection = await buildConversationContext(this.config, this.state, { recentLanguage: "en" })
         .then((c) => renderConversationSection(c, { forMainAgent: true }))
-        .catch(() => "");
+        .catch((e) => {
+          log.warn("phase-2", "konuşma-bağlamı kurulamadı — prompt bölümü boş (degraded)", { error: String(e) });
+          return "";
+        });
       systemPrompt = substitute(tmpl, {
         INTENT_SUMMARY: auditIntent,
         EXISTING_SPEC_DIGEST: existingSpecDigest,
@@ -250,9 +253,10 @@ export class Phase2Controller {
     const rawDims = outcome.approvalInput.dimensions;
     const dimensions = (Array.isArray(rawDims) ? rawDims : []) as AuditDimension[];
     if (rawDims !== undefined && !Array.isArray(rawDims)) {
-      log.warn("phase-2", "dimensions array değil — boş kabul edildi (audit detayı düştü)", {
-        type: typeof rawDims,
-      });
+      // Şema ihlali (sessiz-fallback denetimi): bozuk dimensions sessizce [] → denetim detayı düşer. Görünür kıl
+      // (phase-9 ile tutarlı). Pipeline'ı bozmaz ama şema-ihlali kaydedilir.
+      log.error("phase-2", "denetim dimensions array DEĞİL — şema ihlali, denetim detayı düştü", { type: typeof rawDims });
+      emitChatMessage("system", `⚠️ Faz 2: denetim boyutları bozuk şema ile geldi (${typeof rawDims}) — denetim detayı bu tur eksik.`);
     }
     if (!enriched) {
       emitError("phase-2: enriched_summary missing in completion", null);

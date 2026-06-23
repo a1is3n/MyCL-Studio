@@ -249,7 +249,10 @@ export class Phase9Controller {
       const tmpl = await readFile(this.spec.prompt_template_path!, "utf-8");
       const convSection = await buildConversationContext(this.config, this.state, { recentLanguage: "en" })
         .then((c) => renderConversationSection(c, { forMainAgent: true }))
-        .catch(() => "");
+        .catch((e) => {
+          log.warn("phase-9", "konuşma-bağlamı kurulamadı — prompt bölümü boş (degraded)", { error: String(e) });
+          return "";
+        });
       systemPrompt = substitute(tmpl, {
         SPEC_RISKS: specRisks,
         PHASE_9_AUDIT: phase9Audit,
