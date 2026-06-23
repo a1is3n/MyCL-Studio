@@ -83,3 +83,33 @@ describe("entegrasyon · inspectGateFinding → mahkemeRuling (taklit runTurn, S
     expect(mahkemeRuling(cp).action).toBe("escalate");
   });
 });
+
+// Wiring sinyalleri (Aşama 2-4): mekanik-taban sinyalleri kaynağından türetilince tartışma yolunu açar.
+// (Müfettiş "agree" dönünce tartışma ilk geçişte çözülür → runReasoning/savunma gerekmez; outcome'da
+// "resolution" alanı varsa TAM-TARTIŞMA yolundan geçilmiştir = wiring çalıştı.)
+describe("entegrasyon · wiring sinyalleri → tartışma yolu (Aşama 2-4)", () => {
+  it("isStuck: hata 'cli idle timeout' içerir → TARTIŞMA yolu (flag değil)", async () => {
+    runTurnMock.mockResolvedValue(verdictTurn("agree"));
+    const cp = await inspectGateFinding(cfg, {
+      projectRoot: myclHome,
+      gateLabel: "Faz 9",
+      errors: "cli idle timeout 600000ms",
+    });
+    // outcome bir DebateOutcome (resolution alanı) → mekanik taban (isStuck) tartışmayı tetikledi.
+    expect(cp.outcome && "resolution" in cp.outcome).toBe(true);
+    expect(mahkemeRuling(cp).action).toBe("proceed");
+  });
+
+  it("highStakesAction: güvenlik bulgusu + müfettiş AGREE → tartışma + ESCALATE (anlaşma tek başına güvenli değil)", async () => {
+    runTurnMock.mockResolvedValue(verdictTurn("agree"));
+    const cp = await inspectGateFinding(cfg, {
+      projectRoot: myclHome,
+      gateLabel: "Faz 13",
+      errors: "güvenlik açığı: secret sızıntısı",
+    });
+    expect(cp.highStakes).toBe(true);
+    expect(cp.outcome && "resolution" in cp.outcome).toBe(true);
+    // Yüksek-riskte müfettiş katılsa bile oto-proceed YOK → insana (güvenli eşleme).
+    expect(mahkemeRuling(cp).action).toBe("escalate");
+  });
+});

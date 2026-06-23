@@ -521,13 +521,23 @@ export async function inspectGateFinding(
     priorExperience,
   };
   const signals: InterventionSignals = {
-    isStuck: false,
+    // ÖNDEN-ÇÖZ (CLAUDE.md #6): mekanik-taban sinyalleri sabit-false değil, KAYNAĞINDAN türetilir.
+    // isStuck: gate hatası bir CLI-hang'inden geliyorsa (idle/wall-clock kill → cli-run.ts/cli-session.ts
+    // "cli idle timeout"/"cli wall-clock cap" döndürür, lastFailReason'a sızar) → takılma = mekanik taban →
+    // tam tartışma. Bu metinler MyCL-özgü (proje çıktısında nadir) → false-pozitif düşük; sonuç yalnız
+    // "daha çok inceleme" (asimetrik-maliyet kabul).
+    isStuck: /idle timeout|wall-clock cap/i.test(opts.errors),
     // Döngü mekanik tabandır (yargı yok) → tam tartışma. Gate-fix tek-geçişi değil; çünkü 6 deneme
     // başarısız = "düzeltilebilir bulgu" varsayımı çürüdü, derin bağımsız araştırma gerek.
     isLoop: !!loop,
     noProgress: !!loop,
-    highStakesAction: false,
+    // highStakesAction: güvenlik/secret/csp/auth bulgusu (highStakes 497'de zaten türetilmiş) →
+    // geri-alınamaz/yüksek-risk eşik → mekanik taban → tam tartışma. Tek satır, yeni hesap yok.
+    highStakesAction: highStakes,
     isGateFix: true, // yumuşak sinyal: bir bulgu "düzeltilmek" üzere → false-positive riski
+    // isNovel (recalled.length===0) BİLİNÇLİ BAĞLANMADI: ders dosyası boşken HER orta-riskli gate-fix novel
+    // sayılır → softCount=2 → tek-geçiş flag yerine TAM tartışmaya çıkar (her fix'te iki-model debate). Bu büyük
+    // bir varsayılan-davranış değişikliği (dar/zararsız değil) → YZLLM kararına bırakıldı (açık borç, yarım-iş değil).
     severity: highStakes ? "high" : "medium",
   };
   const result = await runInspectorCheckpoint(config, ctx, signals);
