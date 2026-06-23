@@ -24,6 +24,7 @@ import { modelForTier } from "./model-catalog.js";
 import { decideIntervention, type InterventionSignals, type InterventionDecision } from "./inspector-trigger.js";
 import { recordLesson, recallLessons, retractLesson, type Lesson } from "./experience-layer.js";
 import { backendForRole, claudeKeyForRole, type MyclConfig } from "./config.js";
+import { DECISION_PRINCIPLES } from "./agent-language.js";
 import { log } from "./logger.js";
 
 /**
@@ -174,6 +175,10 @@ export async function runInspectorPass(
     "yourself via Bash, observe the behavior). Use debug as an INVESTIGATION tool: reproduce, isolate,",
     "then judge. Rule 'flag' only if you CANNOT reproduce a real problem, or you PROVED it is a tooling",
     "artifact (framework convention, i18n label, heuristic miss). Record your reproduction attempt in 'evidence'.",
+    "",
+    "## PROJECT STANDARDS — apply these when judging whether a finding is a REAL issue (not just to your own conduct):",
+    DECISION_PRINCIPLES,
+    "",
     "Respond in TURKISH. End with EXACTLY one JSON block:",
     '```json',
     '{"stance":"agree|flag|escalate","reason":"<Türkçe>","evidence":"<bizzat topladığın kanıt>"}',
