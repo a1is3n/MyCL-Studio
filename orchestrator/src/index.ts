@@ -4138,6 +4138,7 @@ async function advanceToNextPhaseInner(from: PhaseId): Promise<void> {
                 projectRoot: state.project_root,
                 gateLabel: phaseLabelTR(13, spec),
                 errors: outcome.stderr,
+                highStakes: true, // YAPISAL: Faz 13 = güvenlik gate'i → kelime-regex'ine bağlı kalma
               });
               const ruling = mahkemeRuling(insp);
               if (ruling.convened) {

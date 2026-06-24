@@ -112,4 +112,30 @@ describe("entegrasyon · wiring sinyalleri → tartışma yolu (Aşama 2-4)", ()
     // Yüksek-riskte müfettiş katılsa bile oto-proceed YOK → insana (güvenli eşleme).
     expect(mahkemeRuling(cp).action).toBe("escalate");
   });
+
+  it("highStakes genişletilmiş dağarcık: dar listede olmayan XSS bile yüksek-risk sayılır (2026-06-24 fix)", async () => {
+    runTurnMock.mockResolvedValue(verdictTurn("agree"));
+    // "XSS" eski 7-kelime listesinde YOK (güvenlik|security|secret|credential|csp|injection|auth) →
+    // eskiden highStakes=false (düşük inceleme). Genişletilmiş regex artık yakalıyor.
+    const cp = await inspectGateFinding(cfg, {
+      projectRoot: myclHome,
+      gateLabel: "Faz 10",
+      errors: "potential XSS in rendered task title (unescaped innerHTML)",
+    });
+    expect(cp.highStakes).toBe(true);
+    expect(mahkemeRuling(cp).action).toBe("escalate");
+  });
+
+  it("highStakes YAPISAL override: caller highStakes=true verince regex'e bakılmaz (Faz 13 yolu)", async () => {
+    runTurnMock.mockResolvedValue(verdictTurn("agree"));
+    // errors'ta hiçbir güvenlik kelimesi yok ama caller yapısal olarak yüksek-risk diyor → güvenilir.
+    const cp = await inspectGateFinding(cfg, {
+      projectRoot: myclHome,
+      gateLabel: "gate",
+      errors: "beklenmedik çıktı farkı",
+      highStakes: true,
+    });
+    expect(cp.highStakes).toBe(true);
+    expect(mahkemeRuling(cp).action).toBe("escalate");
+  });
 });

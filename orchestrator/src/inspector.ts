@@ -487,6 +487,9 @@ export async function inspectGateFinding(
     gateLabel: string;
     errors: string;
     intent?: string;
+    /** YAPISAL yüksek-risk sinyali (caller biliyorsa). Faz 13 güvenlik gate'i true geçer → kelime-regex'ine
+     *  bağlı kalma (regex XSS/CSRF/SSRF vb. kaçırabilir). Verilmezse aşağıdaki pozitif-regex'e düşülür. */
+    highStakes?: boolean;
     /** DÖNGÜ-SINIFI (frozen-goal kanonik örneği): aynı hata `attempts` odaklı oto-düzeltmeye RAĞMEN
      *  sürüyor. Bu, orkestratörün YAPISAL kör-noktası — kendi döngüsünü göremez ("döngüde miyim yoksa
      *  kendimi mi kandırıyorum"). Set edilince isLoop=true → mekanik taban → TAM tartışma (bağımsız
@@ -494,9 +497,15 @@ export async function inspectGateFinding(
     loop?: { attempts: number },
   },
 ): Promise<CheckpointResult> {
-  const highStakes = /güvenlik|security|secret|credential|csp|injection|auth/i.test(
-    `${opts.gateLabel} ${opts.errors}`,
-  );
+  // ÖNDEN-ÇÖZ (2026-06-24 sistemik fix): YAPISAL sinyal önce — caller highStakes verdiyse ona güven (Faz 13
+  // güvenlik gate'i). Yoksa pozitif-regex'e düş AMA dağarcığı genişlet: dar 7-kelime listesi XSS/CSRF/SSRF/RCE/
+  // SQLi/IDOR gibi yaygın güvenlik bulgularını kaçırıp düşük-incelemeye düşürüyordu. highStakes POZİTİF sinyal
+  // (true→daha çok inceleme); fazla-eşleşme güvenli yön (asimetrik: kaçırmak pahalı, fazla-alarm ucuz).
+  const highStakes =
+    opts.highStakes ??
+    /güvenlik|security|secret|credential|\bcsp\b|injection|\bauth|\bxss\b|\bcsrf\b|\bssrf\b|\brce\b|sqli|sql injection|\bidor\b|\bxxe\b|\bssti\b|deserial|prototype pollution|traversal|\bcve-|\blfi\b|\brfi\b|command injection|open redirect|vulnerab|exploit|hardcoded|sanitiz|clickjack|\bcors\b|\bjwt\b|şifre|parola/i.test(
+      `${opts.gateLabel} ${opts.errors}`,
+    );
   const loop = opts.loop;
   // RECALL (Parça 2): bu sorun-imzasına benzer geçmiş dersleri getir → müfettişe İPUCU olarak ver
   // (RECORD ile aynı imza şeması). recallLessons retracted'i eler + verified'i önceler; best-effort.
