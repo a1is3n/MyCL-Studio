@@ -41,6 +41,7 @@ import {
   wasPipelineCompleted,
 } from "./audit.js";
 import { computeVerdict, eventsSince, type HarnessVerdict } from "./harness-verdict.js";
+import { hasDeliverable } from "./phase-1-codebase-probe.js";
 import { buildPipelineEndLines } from "./pipeline-end-summary.js";
 import { detectInterruptedPhase2To9Pure } from "./resume-detection.js";
 import { SerialWorkQueue } from "./serial-queue.js";
@@ -440,6 +441,15 @@ function failSignature(n: PhaseId, ctrl?: FailReasonHolder): string {
  * GEÇTİ vs hangisi ATLANDI (araç yok / uygulanamaz) — atlanan gate "geçti" gibi görünmesin. Audit'ten okur.
  */
 async function emitVerificationSummary(state: State): Promise<void> {
+  // BOŞ-BUILD KORUMASI (2026-06-24, canlı kanıt): hiçbir deliverable üretilmediyse gate'ler yoklukta
+  // sahte-geçer → "✅ Doğrulandı: Güvenlik/Birim/E2E/..." YALAN olur. Bunun yerine GÖRÜNÜR uyarı.
+  if (!(await hasDeliverable(state.project_root))) {
+    emitChatMessage(
+      "system",
+      "⛔ **Doğrulama: boş build** — hiçbir uygulama/kaynak dosyası üretilmedi. Gate'ler yoklukta koştu; bu koşu YEŞİL DEĞİL. (UI build/Faz 5 yanlış atlandıysa spec'i/proje tipini kontrol et.)",
+    );
+    return;
+  }
   const GATE_DIMS: Record<number, string> = {
     10: "Lint", 11: "Sadeleştirme", 12: "Performans", 13: "Güvenlik",
     14: "Birim test", 15: "Entegrasyon", 16: "E2E", 17: "Sızma testi",
@@ -5880,7 +5890,10 @@ async function emitPipelineEndSummary(state: State): Promise<void> {
       // taşıyordu → gate gerçekte temiz geçse bile "yine sarı"/PARTIAL. iteration_started_at'tan itibaren süz
       // (genuine bu-iterasyon fail'i pencere içinde kalır → doğru sarı). İlk-ever (set yok) → tümü (geriye-uyumlu).
       const allEvents = await readAuditLog(state.project_root);
-      verdict = computeVerdict(eventsSince(allEvents, state.iteration_started_at ?? 0));
+      // BOŞ-BUILD KORUMASI (2026-06-24): deliverable üretilmediyse (Faz 5 yanlış atlandı vb.) hüküm FAIL —
+      // gate'ler yoklukta sahte-geçip "yeşil" demesin.
+      const deliverableExists = await hasDeliverable(state.project_root);
+      verdict = computeVerdict(eventsSince(allEvents, state.iteration_started_at ?? 0), { deliverableExists });
     } catch (err) {
       // Pipeline-sonu hüküm (sessiz-fallback denetimi): audit okunamazsa verdict null kalır → özet hükümsüz.
       // log.warn→log.error + GÖRÜNÜR (kullanıcı gate sonuçlarını elle kontrol etsin).
