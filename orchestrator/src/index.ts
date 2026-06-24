@@ -3672,21 +3672,23 @@ async function advanceToNextPhaseInner(from: PhaseId): Promise<void> {
       // v15.7 (2026-05-27): R3-02 — Phase 0 D2 ui-only routing pending_ui_tweak
       // set ediyor; bu kullanıcı UI tweak istiyor demek. has_ui check'i bypass
       // et, yoksa tweak skip edilir ve kullanıcı boş çıkar.
-      const hasUi = await shouldRunMechanical(state.project_root, "has_ui");
+      // ÖNDEN-ÇÖZ + KUŞKUDA FULL (2026-06-24 sistemik fix): Faz 5'i (UI build) yanlış atlamak YIKICI —
+      // uygulama HİÇ kurulmaz (canlı kanıt: 50+ UI-terimli vanilla-HTML spec'i naif has_ui regex'i kaçırdı →
+      // app yok, sonra boş build sahte-geçti). Eski koşul (skip_ui_phases || !hasUi) kırılgan kelime-regex'ine
+      // YIKICI yetki veriyordu (eşleşme yok → atla). DÜZELTME: atlama YALNIZ güvenilir YAPISAL sinyalle olur
+      // (classifier'ın skip_ui_phases: library/cli/api/ml/game). Belirsizlikte (project_type=unknown veya
+      // web/desktop/mobile → skip_ui_phases=false) KOŞ (fail-open; Faz 5 no-UI spec'te zaten az/no-op üretir,
+      // atlamaktan güvenli). Regex artık SKIP kararı VERMEZ — yalnız POZİTİF override (specShowsUi): classifier
+      // non-UI dese bile spec açıkça UI gösteriyorsa yine koş → iki yönlü classifier-hata koruması. OR→AND.
+      const specShowsUi = await shouldRunMechanical(state.project_root, "has_ui"); // pozitif sinyal (regex eşleşmesi)
       const tweakRequested = !!state.pending_ui_tweak;
-      if (!tweakRequested && (state.skip_ui_phases || !hasUi)) {
-        // QC E-2: audit detail kullanıcı için net olsun — structured skip
-        // (Phase 2 classifier) vs heuristic skip (spec.md UI taraması) ayrımı.
-        // project_type undefined olabilen eski state'lerde "unknown" fallback.
-        const reason = state.skip_ui_phases
-          ? `classifier_skip project_type=${state.project_type ?? "unknown"}`
-          : "no_ui_in_spec";
+      if (!tweakRequested && state.skip_ui_phases && !specShowsUi) {
         await appendAuditModule(state.project_root, {
           ts: Date.now(),
           phase: 5,
           event: "phase-5-skipped",
           caller: "mycl-orchestrator",
-          detail: reason,
+          detail: `classifier_skip project_type=${state.project_type ?? "unknown"} (spec'te de UI işareti yok)`,
         });
         await appendAuditModule(state.project_root, {
           ts: Date.now(),
@@ -3696,9 +3698,7 @@ async function advanceToNextPhaseInner(from: PhaseId): Promise<void> {
         });
         emitChatMessage(
           "system",
-          state.skip_ui_phases
-            ? `Faz 5 atlandı — proje tipi UI gerektirmiyor (${state.project_type ?? "?"}).`
-            : "Faz 5 atlandı — spec'te UI yok.",
+          `Faz 5 atlandı — proje tipi UI gerektirmiyor (${state.project_type ?? "?"}) ve spec'te de UI işareti yok.`,
         );
         cur = 5;
         continue;

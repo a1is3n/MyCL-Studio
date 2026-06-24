@@ -28,6 +28,26 @@ describe("skip_ui_phases flow (v15.2.3)", () => {
   });
 });
 
+describe("has_ui Faz 5 skip flow (2026-06-24 sistemik fix: OR→AND, kuşkuda KOŞ)", () => {
+  it("Faz 5 yalnız yapısal sinyal VE regex İKİSİ de 'UI yok' derse atlanır (yıkıcı skip fail-open)", () => {
+    // index.ts:advanceToNextPhase Faz 5 kararı (DÜZELTİLDİ):
+    //   skip = skip_ui_phases && !specShowsUi      (ESKİ kırılgan: skip_ui_phases || !specShowsUi)
+    // Eski OR, kelime-regex'ine YIKICI yetki veriyordu: regex kaçırınca (!specShowsUi=true) tek başına
+    // skip → uygulama hiç kurulmuyordu. Yeni AND: atlama yalnız classifier'ın güvenilir skip sinyaliyle.
+    const cases = [
+      // skip_ui_phases (classifier), specShowsUi (regex pozitif) → skip?
+      { skip_ui_phases: false, specShowsUi: false, expectSkip: false }, // OLAY: unknown + regex kaçırdı → ESKİDEN atla(bug), ŞİMDİ KOŞ
+      { skip_ui_phases: false, specShowsUi: true, expectSkip: false }, // web/UI → koş
+      { skip_ui_phases: true, specShowsUi: false, expectSkip: true }, // library + UI yok → atla (doğru)
+      { skip_ui_phases: true, specShowsUi: true, expectSkip: false }, // classifier non-UI DEDİ ama spec UI gösteriyor → pozitif override: koş
+    ];
+    for (const c of cases) {
+      const skip = c.skip_ui_phases && !c.specShowsUi;
+      expect(skip).toBe(c.expectSkip);
+    }
+  });
+});
+
 describe("has_database state flow (v15.2.3 C-3)", () => {
   it("Faz 7 skip: structured `has_database=false` öncelikli, heuristic fallback", () => {
     // Bu logic index.ts:advanceToNextPhase Faz 7'de:
