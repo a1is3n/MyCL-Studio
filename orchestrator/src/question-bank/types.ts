@@ -56,9 +56,25 @@ export interface CheckSpec {
 }
 
 /**
+ * Bir check'in "ayırt-edici" olduğunu KANITLAYAN fixture: bilinen bir
+ * dosya-durumu + o durumda check'in beklenen sonucu. Lock-anı meta-testi her
+ * fixture'ı izole temp dizinine yazıp check'i koşar, sonucu `expect` ile
+ * karşılaştırır. Kilitlenmek için ≥1 PASS-fixture (bilinen-iyi) VE ≥1
+ * FAIL-fixture (bilinen-kötü) şart (fail-closed).
+ */
+export interface Fixture {
+  name: string;
+  /** relpath → içerik; meta-test temp dizinine yazılır. */
+  files: Record<string, string>;
+  /** Bu fixture'da check'in beklenen sonucu: yalnız PASS veya FAIL. */
+  expect: "PASS" | "FAIL";
+}
+
+/**
  * Banka sorusu. `text` İKİLİ ve Evet=yeşil polariteli ("X JSON ile mi
  * yapılmış?" → Evet=geçer). `real_to_proxy`: partition-laundering'e karşı,
  * checkin gerçek özelliği mi yoksa proxy'yi mi ölçtüğü yazılı kalır.
+ * `fixtures`: lock-anı + load-anı meta-test kanıtı (yoksa kilitlenemez).
  */
 export interface BankQuestion {
   id: string;
@@ -69,6 +85,8 @@ export interface BankQuestion {
   blocking_class: BlockingClass;
   /** "gerçek özellik → ölçülen proxy" eşlemesi (denetlenebilir partition). */
   real_to_proxy: string;
+  /** Ayırt-edicilik kanıtı — bilinen-iyi + bilinen-kötü fixtures. */
+  fixtures: Fixture[];
 }
 
 /**
