@@ -201,6 +201,15 @@ export interface FeatureFlags {
    * Türkçe rapor chat'e (kullanıcı gereksiz fazı görüp KENDİ budar). Tek runReasoning çağrısı; varsayılan AÇIK.
    */
   phase_contribution_report?: boolean;
+  /**
+   * Linear gate-kanıt aynası (SAW esinli, opt-in). `false`/undefined (DEFAULT): tamamen kapalı — hiçbir dış çağrı.
+   * `true` + `LINEAR_API_KEY` env + `linear_project_id`: pipeline-end verdict'i Linear'a TEK-YÖNLÜ yansıtılır.
+   * Mahkeme kararı: Linear ASLA "system of record" DEĞİL — yerel `.mycl/audit.jsonl` kaynaktır; Linear yalnız ayna.
+   * Fail-OPEN + LOUD: Linear hatası pipeline'ı ASLA bloklamaz (görünür uyarı + devam). Sır env'den (config
+   * dosyasına yazılmaz → secret-gate temiz). Bkz. linear-sync.ts. */
+  linear_sync_enabled?: boolean;
+  /** Linear hedef takım id'si (yansıtılacak issue'nun bağlamı). linear_sync_enabled true ise gerekli. */
+  linear_team_id?: string;
 }
 
 const DEFAULT_FEATURES: FeatureFlags = {

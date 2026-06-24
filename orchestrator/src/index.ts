@@ -41,6 +41,7 @@ import {
   wasPipelineCompleted,
 } from "./audit.js";
 import { computeVerdict, eventsSince, type HarnessVerdict } from "./harness-verdict.js";
+import { mirrorVerdictToLinear } from "./linear-sync.js";
 import { hasDeliverable } from "./phase-1-codebase-probe.js";
 import { buildPipelineEndLines } from "./pipeline-end-summary.js";
 import { detectInterruptedPhase2To9Pure } from "./resume-detection.js";
@@ -5922,6 +5923,11 @@ async function emitPipelineEndSummary(state: State): Promise<void> {
         gateFailures: verdict.gateFailures.map((g) => g.phase),
         securitySkipped: verdict.securitySkipped,
       });
+      // Linear gate-kanıt aynası (opt-in, default KAPALI). Yerel audit kaynaktır; bu yalnız tek-yönlü ayna.
+      // Fail-OPEN + LOUD (mirrorVerdictToLinear asla throw etmez) → pipeline ASLA bloklanmaz.
+      if (runtime.config) {
+        await mirrorVerdictToLinear(state, runtime.config, verdict);
+      }
     }
   } catch (err) {
     log.warn("orchestrator", "pipeline end summary failed", err);
