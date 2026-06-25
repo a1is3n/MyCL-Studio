@@ -1145,12 +1145,22 @@ async function handleOpenProject(path: string, integrate = false): Promise<void>
     }
 
     if (wantOnboard && runtime.config) {
+      // onboarded_at'i SENKRON damgala + persist. runOnboarding async ve runtime.state faz tarafından YENİ
+      // objeyle reassign edilebilir (örn. handleUserMessageInner) → runOnboarding'in stale-ref save'i state'i
+      // clobber ederdi (mahkeme Mercek-B/C; reassign'lar kanıtlandı). Bu save handleOpenProject İÇİNDE biter
+      // (sonraki user_message işlenmeden, kilit-güvenli). runOnboarding artık state'e DOKUNMAZ → yarış kalmaz.
+      runtime.state.onboarded_at = Date.now();
+      await saveState(runtime.state).catch((e: unknown) =>
+        log.warn("orchestrator", "onboarded_at persist edilemedi", e),
+      );
       // Tam onboarding: anlama + .mycl iskele + gap-rapor. bootstrapLivingDocs'u İÇERİDE çağırır → aşağıdaki
-      // arka-plan bootstrap + project-map'i ATLA (aynı .mycl/features.md'ye iki eş-zamanlı yazım = yarış;
-      // mahkeme Mercek-B). open'ı bloklamaz (void) — kullanıcı raporu inceleyip geliştirmeye başlar.
+      // arka-plan bootstrap + project-map'i ATLA (eş-zamanlı .mycl/features.md yazım yarışı). open'ı bloklamaz.
       void runOnboarding(runtime.state, runtime.config).catch((e: unknown) =>
         log.warn("orchestrator", "onboarding başarısız (non-fatal)", e),
       );
+    } else if (wantOnboard && !runtime.config) {
+      // KATI #4 (sessiz-skip yok — mahkeme Mercek-C): config yüklenemediyse onboarding başlamaz → GÖRÜNÜR.
+      emitChatMessage("system", "ℹ️ Onboarding başlatılamadı — yapılandırma yüklenemedi.");
     } else if (runtime.config && runtime.state && !midPipeline) {
       void bootstrapLivingDocs(runtime.state, runtime.config).catch((e: unknown) =>
         log.warn("orchestrator", "living-docs bootstrap failed (non-fatal)", e),

@@ -49,6 +49,8 @@ export interface EnsureResult {
   created: boolean;
   /** Mutlak path: `<projectRoot>/error_folder/mycl_errors.db`. */
   dbPath: string;
+  /** DB kullanılabilir mi? false → sqlite3 CLI yok (kurulum atlandı). Caller GÖRÜNÜR uyarmalı (KATI #4). */
+  dbReady: boolean;
 }
 
 /**
@@ -88,7 +90,7 @@ export async function ensureErrorCatalog(
       log.warn("errors-db", "sqlite3 CLI unavailable — skip db init", {
         dbPath,
       });
-      return { created: createdFolder, dbPath };
+      return { created: createdFolder, dbPath, dbReady: false };
     }
     createdDb = true;
     log.info("errors-db", "db schema created", { dbPath });
@@ -111,7 +113,7 @@ export async function ensureErrorCatalog(
   // .gitignore oluşturmaz (YZLLM onboarding kararı).
   await appendGitignoreEntry(projectRoot, `${FOLDER_NAME}/`, opts?.gitignoreOnlyIfExists);
 
-  return { created: createdFolder || createdDb, dbPath };
+  return { created: createdFolder || createdDb, dbPath, dbReady: true };
 }
 
 /**

@@ -16,8 +16,7 @@ import type { State } from "../types.js";
 import type { MyclConfig } from "../config.js";
 import { emitChatMessage } from "../ipc.js";
 import { log } from "../logger.js";
-import { save } from "../state.js";
-import { buildProjectMap, type ProjectMap } from "./project-map.js";
+import { getCachedProjectMap, type ProjectMap } from "./project-map.js";
 import { buildProjectFacts, type ProjectFacts } from "../project-facts.js";
 import { bootstrapLivingDocs } from "../living-docs.js";
 
@@ -126,6 +125,10 @@ function renderReport(opts: {
   const gapRows = gaps
     .map((g) => `| ${g.standard} | ${g.status} | ${g.phase} | ${g.touches} |`)
     .join("\n");
+  // map null ise project-map.json YAZILMADI (adım 2 `if (map)`) → raporda var sanma (mahkeme Mercek-C).
+  const projectMapLine = map
+    ? "- `.mycl/project-map.json` — bu taramanın kalıcı haritası"
+    : "- `.mycl/project-map.json` — üretilemedi (bağımlılık analizi başarısız; log'a bakın)";
 
   return `# MyCL Onboarding Raporu — ${projectName}
 
@@ -146,7 +149,7 @@ ${map?.background ? map.background.split("\n").map((l) => `  > ${l}`).join("\n")
 ## 2. Kurulan MyCL Dosyaları (\`.mycl/\` — non-destructive)
 
 - \`.mycl/state.json\`, \`.mycl/SCHEMA.md\` — MyCL durum/şema
-- \`.mycl/project-map.json\` — bu taramanın kalıcı haritası
+${projectMapLine}
 - \`.mycl/features.md\` + \`.mycl/tech-doc.md\` — ${docsStatus}
 - \`.mycl/onboarding-report.md\` — bu rapor
 
@@ -173,9 +176,15 @@ Bir geliştirme/iyileştirme yaz → proje artık birinci-sınıf MyCL projesi; 
  */
 export async function runOnboarding(state: State, config: MyclConfig): Promise<void> {
   const root = state.project_root;
-  if (state.onboarded_at) {
-    log.info("onboarding", "zaten onboard edilmiş — atlanıyor", { onboarded_at: state.onboarded_at });
+  // Idempotent (defansif ikinci kapı): rapor zaten varsa önceden onboard edilmiş → no-op. onboarded_at'i
+  // handleOpenProject SENKRON damgalar (state yarışını önlemek için); runOnboarding state'e DOKUNMAZ — yalnız
+  // .mycl/ dosyaları yazar (mahkeme Mercek-B/C: stale-ref save yarışı bu ayrımla kaynağında çözüldü).
+  try {
+    await fs.access(join(root, ONBOARD_REPORT_REL));
+    log.info("onboarding", "rapor zaten var — atlanıyor");
     return;
+  } catch {
+    // rapor yok → onboarding çalışır
   }
   const projectName = basename(root.replace(/\/+$/, "")) || "proje";
   emitChatMessage(
@@ -188,8 +197,11 @@ export async function runOnboarding(state: State, config: MyclConfig): Promise<v
     log.warn("onboarding", "buildProjectFacts başarısız", e);
     return null;
   });
-  const map = await buildProjectMap(root).catch((e: unknown) => {
-    log.warn("onboarding", "buildProjectMap başarısız", e);
+  // getCachedProjectMap → hesaplar VE in-memory cache'i doldurur; onboarding sonrası ilk recall yeniden
+  // hesaplamaz (mahkeme Mercek-C perf bulgusu). handleOpenProject clearProjectMapCache'i bundan ÖNCE
+  // çalıştırır (runOnboarding ilk await'te yield eder) → taze map, bayat değil.
+  const map = await getCachedProjectMap(root).catch((e: unknown) => {
+    log.warn("onboarding", "project-map başarısız", e);
     return null;
   });
 
@@ -225,12 +237,8 @@ export async function runOnboarding(state: State, config: MyclConfig): Promise<v
     .writeFile(join(root, ONBOARD_REPORT_REL), report, "utf-8")
     .catch((e: unknown) => log.warn("onboarding", "onboarding-report.md yazılamadı", e));
 
-  // 6. Durumu damgala (idempotent) + persist.
-  state.onboarded_at = Date.now();
-  if (state.origin == null) state.origin = "foreign";
-  await save(state).catch((e: unknown) => log.warn("onboarding", "state kaydedilemedi", e));
-
-  // 7. Chat özeti — kısa, dürüst, non-destructive vurgulu.
+  // 6. Chat özeti — kısa, dürüst, non-destructive vurgulu. (Durum: onboarded_at + origin handleOpenProject'te
+  //    SENKRON damgalanır; bu modül state'e DOKUNMAZ → yarış yok.)
   const centralTop =
     map && map.available && map.central[0] ? ` En merkezi modül: \`${map.central[0].file}\`.` : "";
   emitChatMessage(

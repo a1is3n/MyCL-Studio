@@ -589,6 +589,7 @@ export class Phase5Controller {
     try {
       await ensureViteRuntimeInjection(this.state.project_root, {
         allowSourceEdit: viteSourceEditAllowed(this.state),
+        gitignoreOnlyIfExists: this.state.origin === "foreign",
       });
     } catch (err) {
       // Load-bearing (sessiz-fallback denetimi): bu enjeksiyon UI çalışma-anı hatalarını yakalar → başarısızsa

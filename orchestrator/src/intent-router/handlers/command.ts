@@ -603,6 +603,7 @@ async function runDevServer(
   try {
     await ensureViteRuntimeInjection(state.project_root, {
       allowSourceEdit: viteSourceEditAllowed(state),
+      gitignoreOnlyIfExists: state.origin === "foreign",
     });
   } catch (err) {
     log.warn("command-handler", "vite injection failed (non-fatal)", err);

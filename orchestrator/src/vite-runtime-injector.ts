@@ -58,7 +58,7 @@ export function viteSourceEditAllowed(
  */
 export async function ensureViteRuntimeInjection(
   projectRoot: string,
-  opts?: { allowSourceEdit?: boolean },
+  opts?: { allowSourceEdit?: boolean; gitignoreOnlyIfExists?: boolean },
 ): Promise<{
   injected: boolean;
   configPath: string | null;
@@ -115,8 +115,10 @@ export async function ensureViteRuntimeInjection(
     return { injected: false, configPath };
   }
 
-  // 2) .gitignore'a `.mycl/` ekle (yoksa)
-  await appendGitignoreEntry(projectRoot, ".mycl/");
+  // 2) .gitignore'a `.mycl/` ekle. Yabancı-köken projede "varsa ekle" (gitignoreOnlyIfExists) → yeni
+  //    .gitignore OLUŞTURMA (mahkeme Mercek-A; bugün allowSourceEdit=false guard'ı yüzünden yabancıda buraya
+  //    ulaşılmaz, ama ileride onay akışı eklenince güvenli kalsın — forward-proof).
+  await appendGitignoreEntry(projectRoot, ".mycl/", opts?.gitignoreOnlyIfExists);
 
   // 3) vite.config.*'i edit et — idempotent marker ile.
   let configContent = "";
@@ -205,10 +207,11 @@ async function findViteConfig(projectRoot: string): Promise<string | null> {
 async function appendGitignoreEntry(
   projectRoot: string,
   entry: string,
+  onlyIfExists?: boolean,
 ): Promise<void> {
-  // İdempotent ortak util (zaten kapsanıyorsa no-op → tree kirlenmez).
+  // İdempotent ortak util (zaten kapsanıyorsa no-op → tree kirlenmez). onlyIfExists → yoksa oluşturma.
   try {
-    await ensureGitignoreEntry(projectRoot, entry);
+    await ensureGitignoreEntry(projectRoot, entry, { onlyIfExists });
   } catch (err) {
     log.warn("vite-injector", ".gitignore write failed", err);
   }

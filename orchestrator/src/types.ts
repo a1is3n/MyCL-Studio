@@ -292,9 +292,11 @@ export interface State {
    */
   origin?: ProjectOrigin;
   /**
-   * Yabancı-köken projede kullanıcı MyCL'in KAYNAK dosyalarını düzenlemesine (build config'e
-   * runtime-error plugin enjeksiyonu vb.) açıkça onay verdi mi? false/undefined → kaynak-edit ATLANIR
-   * + gap-raporuna yazılır. origin!=="foreign" iken yok sayılır (MyCL projesi serbest düzenlenir).
+   * REZERVE forward-hook (mahkeme Mercek-A): yabancı-köken projede kullanıcı MyCL'in KAYNAK dosyalarını
+   * düzenlemesine (build config'e runtime-error plugin enjeksiyonu vb.) onay verdi mi? false/undefined →
+   * kaynak-edit ATLANIR. origin!=="foreign" iken yok sayılır. NOT: ONAY AKIŞI HENÜZ YOK — bu alanı SET eden
+   * üretim kodu yoktur; yabancı proje şimdilik HER ZAMAN korunur (kaynak-edit hep atlanır). İleride bir onay
+   * komutu/UI eklenince SET edilecek (yarım-kontrat değil, bilinçli rezerve).
    */
   source_edit_approved?: boolean;
   /**

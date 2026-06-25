@@ -220,6 +220,10 @@ export class Phase0Controller {
     const ensured = await ensureErrorCatalog(this.state.project_root, {
       gitignoreOnlyIfExists: this.state.origin === "foreign",
     });
+    if (!ensured.dbReady) {
+      // KATI #4 (sessiz fallback yok — mahkeme Mercek-B): sqlite3 yoksa hata kataloğu kurulamaz → GÖRÜNÜR uyar.
+      emitChatMessage("system", "ℹ️ sqlite3 CLI bulunamadı — hata kataloğu kurulamadı (devre dışı).");
+    }
     if (ensured.created) {
       await appendAudit(this.state.project_root, {
         ts: Date.now(),

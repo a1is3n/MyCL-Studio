@@ -169,6 +169,7 @@ export async function restartDevServerForPhase7(
   try {
     await ensureViteRuntimeInjection(state.project_root, {
       allowSourceEdit: viteSourceEditAllowed(state),
+      gitignoreOnlyIfExists: state.origin === "foreign",
     });
   } catch (err) {
     log.warn("smoke-test", "ensureViteRuntimeInjection (phase7) failed (non-fatal)", err);
@@ -280,6 +281,7 @@ export async function restartDevServerSimple(
   try {
     await ensureViteRuntimeInjection(state.project_root, {
       allowSourceEdit: viteSourceEditAllowed(state),
+      gitignoreOnlyIfExists: state.origin === "foreign",
     });
   } catch (err) {
     log.warn("smoke-test", "ensureViteRuntimeInjection failed (non-fatal, dev-server yine denenecek)", err);
