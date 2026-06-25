@@ -176,12 +176,12 @@ export class Phase7Controller {
     log.info("phase-7", "run start");
 
     if (!this.state.intent_summary) {
-      emitError("phase-8: intent_summary missing", null);
+      emitError("phase-7: intent_summary missing", null);
       this.lastFailReason = "intent_summary missing (Phase 1 incomplete)";
       return "fail";
     }
     if (!this.spec.production_config) {
-      emitError("phase-8 production_config missing", null);
+      emitError("phase-7 production_config missing", null);
       this.lastFailReason = "production_config missing in spec";
       return "fail";
     }

@@ -5897,6 +5897,9 @@ async function ensurePlaywrightForPhase16(
     );
     return { proceed: false, reason: "install_failed" };
   } else if (ensureRes.action === "unsupported") {
+    // FROZEN-GOAL #14: 'unsupported' sessizce skip ediyordu — kullanıcı E2E'nin neden atlandığını görmüyordu.
+    // Tek kaynak (her iki caller'ı kapsar): görünür bilgi mesajı (akışı engellemez).
+    emitChatMessage("system", "⏭ Faz 16 (E2E) atlandı — bu stack için Playwright/E2E desteklenmiyor (bilgi; akış sürer).");
     return { proceed: false, reason: "unsupported" };
   }
 
@@ -6041,9 +6044,17 @@ async function emitPipelineEndSummary(state: State): Promise<void> {
       if (runtime.config) {
         await mirrorVerdictToLinear(state, runtime.config, verdict);
       }
+    } else {
+      // FROZEN-GOAL #16: verdict hesaplanamadı (audit okunamadı; üstte görünür uyarı verildi) → pipeline_end
+      // emit EDİLMEZSE frontend pipelineVerdict null kalır → sidebar chip yok → SESSİZ FALSE-GREEN izlenimi.
+      // Bilinen non-green değerle (PARTIAL) emit et: chip "tam doğrulanmadı" göstersin.
+      emit("pipeline_end", { verdict: "PARTIAL", gateFailures: [], securitySkipped: [] });
     }
   } catch (err) {
-    log.warn("orchestrator", "pipeline end summary failed", err);
+    // FROZEN-GOAL #15: özet üretimi patlarsa eski kod yalnız log.warn yapıyordu → kullanıcı pipeline'ın
+    // hükümsüz bittiğini hiç görmüyordu (sessiz). Görünür kıl.
+    log.error("orchestrator", "pipeline end summary failed", err);
+    emitChatMessage("system", "⚠️ Pipeline sonu özeti üretilemedi — gate sonuçlarını elle kontrol et.");
   }
 }
 
