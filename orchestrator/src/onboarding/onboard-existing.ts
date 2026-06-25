@@ -23,6 +23,7 @@ import { bootstrapLivingDocs, isNoAccessDoc } from "../living-docs.js";
 import { randomUUID } from "node:crypto";
 import { appendTask } from "../task-queue/store.js";
 import type { TaskQueueItem } from "../task-queue/types.js";
+import { copyProjectToAccessible, isUnderMyclProjeler } from "./copy-to-accessible.js";
 
 const PROJECT_MAP_REL = join(".mycl", "project-map.json");
 const ONBOARD_REPORT_REL = join(".mycl", "onboarding-report.md");
@@ -213,7 +214,11 @@ birinci-sınıf MyCL projesi; normal pipeline (Faz 1→17) çalışır.
 export async function runOnboarding(
   state: State,
   config: MyclConfig,
-  deps?: { kickQueue?: () => Promise<void> },
+  deps?: {
+    kickQueue?: () => Promise<void>;
+    /** Okunamayan proje erişilebilir konuma kopyalandı → frontend o kopyayı açsın (open_project_request). */
+    requestReopen?: (path: string, integrate: boolean) => Promise<void>;
+  },
 ): Promise<void> {
   const root = state.project_root;
   // Idempotent: BAŞARI işareti varsa (önceden GERÇEKTEN okunup onboard edildi) → no-op. Apology/no-access koşusu
@@ -285,16 +290,43 @@ export async function runOnboarding(
       docsStatus = "durum bilinmiyor";
   }
   if (docsResult.reason === "no-access") {
-    // "Düşünme" (YZLLM): MyCL erişemediğini ANLAR → özrü döküman diye YAZMAZ → net, dürüst, aksiyon-önerili escalate.
-    emitChatMessage(
-      "system",
-      `⚠️ **MyCL bu projeyi OKUYAMADI** (\`${root}\`) — ajanın dosya-okuma izni engellendi (izin/sandbox). ` +
-        "Bu yüzden derin döküman/analiz üretilemedi ve **hiçbir şey uydurulmadı**. " +
-        "Olası neden: sandbox izin çakışması (ev ~ altındaki projeler bu sürümde düzeltildi) veya projenin dosya izinleri. " +
-        "Çözüm: MyCL'i güncelle + projeyi yeniden '📂 Proje Aç' ile aç. Sürerse proje izinlerini kontrol et / okunabilir " +
-        "bir yola taşı **ya da bana projenin ne olduğunu yaz** — ona göre ilerleyeyim.",
-    );
-  } else if (docsResult.reason === "failed") {
+    // MyCL ajan-sandbox'ı bu projeyi OKUYAMADI (tipik: ev ~ altındaki proje, macOS Seatbelt nested-profile).
+    // YZLLM kararı: özrü yazma → ev-DIŞI erişilebilir konuma KOPYALA + kopyayı aç (orijinal DOKUNULMAZ; yedek
+    // kalır). Kopya kendi onboarding'ini yapar (NON-home → ajan okur) → buradan ERKEN ÇIK (orijinal için
+    // rapor/marker/gap YOK; kopya yapar).
+    if (isUnderMyclProjeler(root)) {
+      // Loop-guard: zaten "MyCL Projeler" altındaki kopyayı YİNE okuyamadık → tekrar kopyalama (sonsuz döngü).
+      emitChatMessage(
+        "system",
+        "⚠️ MyCL bu projeyi (erişilebilir kopya konumunda olmasına rağmen) yine de OKUYAMADI — daha derin bir izin/sistem sorunu. **Bana projenin ne olduğunu yaz**, ona göre ilerleyeyim.",
+      );
+      return;
+    }
+    if (!deps?.requestReopen) {
+      emitChatMessage(
+        "system",
+        `⚠️ **MyCL bu projeyi OKUYAMADI** (\`${root}\`) — sandbox izni; hiçbir şey uydurulmadı. **Bana projenin ne olduğunu yaz**, ona göre ilerleyeyim.`,
+      );
+      return;
+    }
+    try {
+      emitChatMessage(
+        "system",
+        `⚠️ **MyCL bu projeyi sandbox izni yüzünden OKUYAMADI** (\`${root}\`). Erişilebilir bir **KOPYA** oluşturup oradan devam ediyorum — **orijinaline DOKUNULMAZ** (yedek kalır)…`,
+      );
+      const dest = await copyProjectToAccessible(root);
+      emitChatMessage("system", `📁 Erişilebilir kopya hazır: \`${dest}\` — açıp orada okuyup geliştireceğim.`);
+      await deps.requestReopen(dest, true);
+    } catch (e) {
+      log.warn("onboarding", "erişilebilir kopya oluşturulamadı", e);
+      emitChatMessage(
+        "system",
+        "⚠️ MyCL projeyi okuyamadı ve erişilebilir kopya da oluşturamadı (disk/izin?). **Bana projenin ne olduğunu yaz**, ona göre ilerleyeyim.",
+      );
+    }
+    return;
+  }
+  if (docsResult.reason === "failed") {
     emitChatMessage(
       "system",
       "⚠️ Entegrasyon dökümanı (features/tech-doc) üretilemedi — bu ÖNEMLİ. Projeyi yeniden '📂 Proje Aç' ile açarak veya bir geliştirme başlatarak tekrar denenir.",
@@ -310,10 +342,10 @@ export async function runOnboarding(
     .writeFile(join(root, ONBOARD_REPORT_REL), report, "utf-8")
     .catch((e: unknown) => log.warn("onboarding", "onboarding-report.md yazılamadı", e));
 
-  // 6. BAŞARI işareti + "✅ entegre edildi" özeti — YALNIZ MyCL projeyi okuyabildiyse (no-access DEĞİL).
-  //    Apology/no-access koşusu işaret BIRAKMAZ → re-open yeniden dener; "OKUYAMADI" mesajı zaten yukarıda verildi.
-  //    runOnboarding state.json'a dokunmaz; işaret .mycl/ dosyasıdır (yarış yok).
-  if (docsResult.reason !== "no-access") {
+  // 6. BAŞARI işareti + "✅ entegre edildi" özeti. no-access YUKARIDA erken-return etti (kopya+reopen) → buraya
+  //    yalnız "kod okundu" reason'lar (written/exists/provider-skip/empty/failed) gelir. İşaret .mycl/ dosyasıdır
+  //    (runOnboarding state.json'a dokunmaz → yarış yok); apology işaret bırakmaz, re-open yeniden dener.
+  {
     await fs
       .writeFile(
         join(root, ONBOARD_MARKER_REL),

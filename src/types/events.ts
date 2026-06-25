@@ -66,7 +66,14 @@ export type OrchestratorEvent =
   | UserGuideEvent
   | TechDocEvent
   | SpecReviewEvent
+  | OpenProjectRequestEvent
   | ErrorEvent;
+
+/** Orkestratör → frontend: bu projeyi aç (ör. okunamayan proje erişilebilir konuma kopyalandı → kopyayı aç). */
+export interface OpenProjectRequestEvent {
+  kind: "open_project_request";
+  data: { path: string; integrate?: boolean };
+}
 
 /**
  * v15.6: Orkestrator ajan event'leri — frontend "🧠 Orkestrator" modalında

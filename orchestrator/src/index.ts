@@ -1157,6 +1157,10 @@ async function handleOpenProject(path: string, integrate = false): Promise<void>
           await emitQueueChangedFor(path);
           await kickWorkQueue();
         },
+        // Okunamayan proje erişilebilir konuma kopyalandı → frontend kopyayı açsın (open_project_request).
+        requestReopen: async (copyPath, integrate) => {
+          emit("open_project_request", { path: copyPath, integrate });
+        },
       }).catch((e: unknown) => log.warn("orchestrator", "onboarding başarısız (non-fatal)", e));
     } else if (wantOnboard && !runtime.config) {
       // KATI #4 (sessiz-skip yok — mahkeme Mercek-C): config yüklenemediyse onboarding başlamaz → GÖRÜNÜR.

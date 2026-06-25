@@ -78,6 +78,8 @@ export interface AgentThinkingEvent {
 interface MainState {
   messages: ChatMessage[];
   pendingAskq: PendingAskq | null;
+  /** Orkestratör "şu projeyi aç" istedi (ör. okunamayan proje kopyalandı → kopyayı aç). useEffect tüketir + temizler. */
+  pendingOpenRequest: { path: string; integrate?: boolean } | null;
   translations: TranslationEntry[];
   ccEvents: CCEvent[];
   ccBanner: {
@@ -137,6 +139,7 @@ interface MainState {
 const INITIAL_STATE: MainState = {
   messages: [],
   pendingAskq: null,
+  pendingOpenRequest: null,
   translations: [],
   ccEvents: [],
   ccBanner: null,
@@ -197,6 +200,10 @@ function reduce(state: MainState, ev: OrchestratorEvent): MainState {
       ...state,
       messages: [...state.messages, newMsg],
     };
+  }
+  if (ev.kind === "open_project_request") {
+    // Orkestratör "şu projeyi aç" istedi (okunamayan proje kopyalandı → kopyayı aç). useEffect tüketir.
+    return { ...state, pendingOpenRequest: ev.data };
   }
   if (ev.kind === "error") {
     const d = ev.data;
@@ -889,6 +896,15 @@ function App() {
     setProjectPath(path);
     setMainState({ ...INITIAL_STATE });
   };
+
+  // Orkestratör "şu projeyi aç" istedi (okunamayan proje erişilebilir konuma kopyalandı → kopyayı aç).
+  // onProjectSelected mainState'i INITIAL_STATE'e sıfırlar → pendingOpenRequest temizlenir, tekrar tetiklenmez.
+  useEffect(() => {
+    const req = mainState.pendingOpenRequest;
+    if (!req) return;
+    onProjectSelected(req.path, { integrate: req.integrate });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mainState.pendingOpenRequest]);
 
   // Orchestrator hazır olduğunda proje aç event'ini yolla (gecikme olursa).
   // `orch.bootSequence` her ready event'inde artar — orchestrator restart
