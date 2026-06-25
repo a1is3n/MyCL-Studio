@@ -169,6 +169,8 @@ interface Props {
   /** v15.13 (saha 3/5): Oto-cevap — önerili netleştirme soruları otomatik yanıtlansın mı. */
   autoAnswer?: boolean;
   onAutoAnswerToggle?: (enabled: boolean) => void;
+  /** YZLLM (cave5): entegre (foreign-origin) projede oto-cevap kullanılamaz → checkbox devre-dışı + kapalı görünür. */
+  autoAnswerDisabled?: boolean;
   /** YZLLM 2026-06-16: SORU modu — açıkken composer mesajı pipeline'ı tetiklemez, salt-okunur
    *  danışma (orkestratör devs/ + .mycl + kodu okuyup Türkçe cevaplar). */
   questionMode?: boolean;
@@ -207,6 +209,7 @@ export function ChatPanel({
   onAddTaskToQueue,
   autoAnswer,
   onAutoAnswerToggle,
+  autoAnswerDisabled,
   questionMode,
   onQuestionModeToggle,
   onDocClick,
@@ -566,17 +569,30 @@ export function ChatPanel({
         {onAutoAnswerToggle && (
           <label
             className="intent-pill"
-            title="Açıkken: bir önerisi olan netleştirme soruları otomatik o öneriyle yanıtlanır (daha hızlı iterasyon). Onaylar + önerisi olmayan sorular yine size sorulur."
-            style={{ cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 4 }}
+            title={
+              autoAnswerDisabled
+                ? "Entegre (mevcut proje entegrasyonu) modunda oto-cevap kullanılamaz — kararları sen veriyorsun; sorular sana gelir."
+                : "Açıkken: bir önerisi olan netleştirme soruları otomatik o öneriyle yanıtlanır (daha hızlı iterasyon). Onaylar + önerisi olmayan sorular yine size sorulur."
+            }
+            style={{
+              cursor: autoAnswerDisabled ? "not-allowed" : "pointer",
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 4,
+              opacity: autoAnswerDisabled ? 0.5 : 1,
+            }}
           >
             <input
               type="checkbox"
               data-testid="auto-answer-toggle"
-              checked={!!autoAnswer}
+              checked={!!autoAnswer && !autoAnswerDisabled}
+              disabled={autoAnswerDisabled}
               onChange={(e) => onAutoAnswerToggle(e.target.checked)}
               style={{ margin: 0 }}
             />
-            <span className="intent-pill-label">Oto-cevap</span>
+            <span className="intent-pill-label">
+              Oto-cevap{autoAnswerDisabled ? " (entegre modunda kapalı)" : ""}
+            </span>
           </label>
         )}
         {/* YZLLM 2026-06-16: SORU modu — açıkken composer mesajı pipeline'ı TETİKLEMEZ; MyCL geçmiş

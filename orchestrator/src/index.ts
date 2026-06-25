@@ -144,7 +144,7 @@ import { createCheckpoint } from "./git.js";
 import { snapshotBeforeAutofix, takeRollback, restoreSnapshot, disarmRollback } from "./fix-snapshot.js";
 import { setSandboxPolicy } from "./agent-sandbox.js";
 import { setCacheTtl } from "./codegen/cli-backend.js";
-import { autoAnswerSuggested, setAutoAnswerSuggested } from "./auto-answer.js";
+import { autoAnswerSuggested, setAutoAnswerSuggested, setIntegrateModeSuppression } from "./auto-answer.js";
 import { bootstrapLivingDocs, updateLivingDocs } from "./living-docs.js";
 import { globalConfigDir } from "./paths.js";
 import { pruneOldLogs } from "./log-retention.js";
@@ -1126,6 +1126,14 @@ async function handleOpenProject(path: string, integrate = false): Promise<void>
       await saveState(runtime.state).catch((e: unknown) =>
         log.warn("orchestrator", "origin persist edilemedi", e),
       );
+    }
+    // ENTEGRE (foreign-origin) projede oto-cevabı BASTIR (YZLLM cave5): bu projenin kararlarını (mock vs gerçek
+    // DB gibi) kullanıcı verir → sorular ona gelir, oto-cevap baypas etmez. Non-foreign → normal oto-cevap.
+    // Modül-singleton → bu açılışın TÜM askq'larını etkiler. UI'a bildir (checkbox entegre-modda devre-dışı görünsün).
+    {
+      const integrateSuppress = runtime.state.origin === "foreign";
+      setIntegrateModeSuppression(integrateSuppress);
+      emit("auto_answer_mode", { suppressed: integrateSuppress });
     }
     // integrate bayrağı (UI "Proje Aç") + foreign + henüz-BAŞARIYLA-onboard-edilmemiş → TAM onboarding.
     // İdempotency BAŞARI işaretine (.mycl/onboarded.json) bakar — eski onboarded_at DEĞİL. Apology/no-access

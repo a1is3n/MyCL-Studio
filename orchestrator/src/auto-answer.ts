@@ -12,13 +12,28 @@
 // izolasyonu: frontend sync'i olmayan birim-testler manuel-onay akışını bozmadan koşar).
 
 let _enabled = false;
+// YZLLM (cave5): ENTEGRE (foreign-origin) projede oto-cevap BASTIRILIR — kararları kullanıcı verir (mevcut
+// projesinde "mock mu gerçek DB mi" gibi seçimleri oto-cevap baypas etmesin). _enabled (kullanıcının GLOBAL
+// tercihi) DEĞİŞMEZ; bu ayrı bayrak yalnız entegre-projede askq'ları kullanıcıya yönlendirir. handleOpenProject
+// origin'e göre set eder; non-foreign projede false → normal oto-cevap.
+let _integrateSuppressed = false;
 
 export function setAutoAnswerSuggested(on: boolean): void {
   _enabled = on;
 }
 
+/** Entegre-projede oto-cevabı bastır (origin==="foreign"). Tüm autoAnswerSuggested/Pick okumaları bunu uygular. */
+export function setIntegrateModeSuppression(on: boolean): void {
+  _integrateSuppressed = on;
+}
+
+/** Şu an entegre-bastırma aktif mi (UI'ı bilgilendirmek için). */
+export function isIntegrateSuppressed(): boolean {
+  return _integrateSuppressed;
+}
+
 export function autoAnswerSuggested(): boolean {
-  return _enabled;
+  return _enabled && !_integrateSuppressed;
 }
 
 /**
@@ -34,7 +49,7 @@ export function autoAnswerSuggested(): boolean {
  * controller çağırmaz) → kullanıcı sürer.
  */
 export function autoAnswerPick(options_tr: string[], suggested_tr?: string): string | null {
-  if (!_enabled) return null;
+  if (!_enabled || _integrateSuppressed) return null; // entegre-projede oto-cevap yok → kullanıcı yanıtlar
   if (suggested_tr === undefined && options_tr.length === 0) return null;
   return suggested_tr ?? options_tr[0]!;
 }

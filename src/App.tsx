@@ -80,6 +80,8 @@ interface MainState {
   pendingAskq: PendingAskq | null;
   /** Orkestratör "şu projeyi aç" istedi (ör. okunamayan proje kopyalandı → kopyayı aç). useEffect tüketir + temizler. */
   pendingOpenRequest: { path: string; integrate?: boolean } | null;
+  /** Entegre (foreign-origin) projede oto-cevap bastırılıyor → checkbox devre-dışı görünür (YZLLM). */
+  autoAnswerSuppressed: boolean;
   translations: TranslationEntry[];
   ccEvents: CCEvent[];
   ccBanner: {
@@ -140,6 +142,7 @@ const INITIAL_STATE: MainState = {
   messages: [],
   pendingAskq: null,
   pendingOpenRequest: null,
+  autoAnswerSuppressed: false,
   translations: [],
   ccEvents: [],
   ccBanner: null,
@@ -204,6 +207,10 @@ function reduce(state: MainState, ev: OrchestratorEvent): MainState {
   if (ev.kind === "open_project_request") {
     // Orkestratör "şu projeyi aç" istedi (okunamayan proje kopyalandı → kopyayı aç). useEffect tüketir.
     return { ...state, pendingOpenRequest: ev.data };
+  }
+  if (ev.kind === "auto_answer_mode") {
+    // Entegre projede oto-cevap bastırılıyor → checkbox devre-dışı görünsün (kararları kullanıcı verir).
+    return { ...state, autoAnswerSuppressed: ev.data.suppressed };
   }
   if (ev.kind === "error") {
     const d = ev.data;
@@ -1338,6 +1345,7 @@ function App() {
           onAddTaskToQueue={handleAddTaskToQueue}
           autoAnswer={autoAnswer}
           onAutoAnswerToggle={handleAutoAnswerToggle}
+          autoAnswerDisabled={mainState.autoAnswerSuppressed}
           questionMode={questionMode}
           onQuestionModeToggle={handleQuestionModeToggle}
           onDocClick={() => setProjectDocOpen(true)}

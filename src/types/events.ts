@@ -67,12 +67,19 @@ export type OrchestratorEvent =
   | TechDocEvent
   | SpecReviewEvent
   | OpenProjectRequestEvent
+  | AutoAnswerModeEvent
   | ErrorEvent;
 
 /** Orkestratör → frontend: bu projeyi aç (ör. okunamayan proje erişilebilir konuma kopyalandı → kopyayı aç). */
 export interface OpenProjectRequestEvent {
   kind: "open_project_request";
   data: { path: string; integrate?: boolean };
+}
+
+/** Orkestratör → frontend: entegre (foreign-origin) projede oto-cevap bastırılıyor mu (checkbox devre-dışı görünsün). */
+export interface AutoAnswerModeEvent {
+  kind: "auto_answer_mode";
+  data: { suppressed: boolean };
 }
 
 /**
