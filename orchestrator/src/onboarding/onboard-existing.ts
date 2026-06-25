@@ -19,7 +19,7 @@ import { emitChatMessage } from "../ipc.js";
 import { log } from "../logger.js";
 import { getCachedProjectMap, type ProjectMap } from "./project-map.js";
 import { buildProjectFacts, type ProjectFacts } from "../project-facts.js";
-import { bootstrapLivingDocs } from "../living-docs.js";
+import { bootstrapLivingDocs, isNoAccessDoc } from "../living-docs.js";
 import { randomUUID } from "node:crypto";
 import { appendTask } from "../task-queue/store.js";
 import type { TaskQueueItem } from "../task-queue/types.js";
@@ -35,10 +35,19 @@ const ONBOARD_MARKER_REL = join(".mycl", "onboarded.json");
 export async function onboardingSucceeded(root: string): Promise<boolean> {
   try {
     await fs.access(join(root, ONBOARD_MARKER_REL));
-    return true;
   } catch {
-    return false;
+    return false; // işaret yok → onboard edilmemiş
   }
+  // İşaret VAR ama features.md APOLOGY ise BAŞARILI SAYMA → re-open yeniden dener (SELF-HEAL). cave5 canlı:
+  // 18:04 koşusu isNoAccessDoc apology'yi kaçırınca bootstrapLivingDocs "exists" döndü → marker docs="exists"
+  // yazıldı ama features.md hâlâ "No features could be documented…" idi. Bu kontrol o bozuk işareti geçersizler.
+  try {
+    const feat = await fs.readFile(join(root, ".mycl", "features.md"), "utf-8");
+    if (isNoAccessDoc({ features_md: feat })) return false;
+  } catch {
+    // features.md yok → işaret yeterli (kod okundu, docs provider-skip olabilir)
+  }
+  return true;
 }
 
 /** Bir MyCL standardı ve onboarding'de NEDEN uygulanmadığı (kaynak-değiştiren → gap). */

@@ -169,6 +169,20 @@ describe("isNoAccessDoc (ajan kodu okuyamadı tespiti — YZLLM cave5)", () => {
     expect(isNoAccessDoc({ features_md: "  mycl_no_access: izin yok", tech_doc_md: "" })).toBe(true);
   });
 
+  // CANLI REGRESYON (cave5): eski dist'in features.md'ye yazdığı GERÇEK İngilizce apology. Eski konservatif
+  // eşik bunu KAÇIRIYORDU (yanlış-negatif) → bootstrapLivingDocs "exists" döndü → onboarding atlandı.
+  it("cave5 GERÇEK İngilizce apology → true (güçlü imza 'no features could be documented')", () => {
+    expect(
+      isNoAccessDoc({
+        features_md:
+          "# Features\n\n_No features could be documented: the codebase at `/Users/umitduman/cave5` is " +
+          "inaccessible (filesystem reads denied by permission settings and the shell sandbox fails to " +
+          "initialize). Nothing was inventable without real code to ground it._",
+        tech_doc_md: "",
+      }),
+    ).toBe(true);
+  });
+
   it("kısa erişim-hatası özrü (≥2 ibare) → true (heuristik fallback)", () => {
     expect(
       isNoAccessDoc({

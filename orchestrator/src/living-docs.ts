@@ -295,29 +295,34 @@ export async function bootstrapLivingDocs(
 }
 
 /**
- * Ajanın "kod tabanını okuyamadım" sinyali/özrü mü?
- *  - BİRİNCİL + KESİN: prompt-yönlendirmeli MYCL_NO_ACCESS belirteci (yanlış-pozitif YOK).
- *  - FALLBACK (ajan belirteci izlemezse): YALNIZ açık BAŞARISIZLIK ibareleri + KONSERVATİF eşik (≥2 kısa-doc /
- *    ≥3 her boy). Çapraz-aile mahkeme false-pozitif bulgusu: meşru bir feature-doc'ta tek tesadüfi "erişilemedi"
- *    (ör. "dosya-erişilemedi hatalarını yönetir") ARTIK TETİKLEMEZ — ≥2 ayrı ibare gerekir. Olumlu/belirsiz
- *    formlar (koda erişilebilir/erişildi, uydurulamaz, kabuk-sandbox noise, çıplak "belgelenemedi") LİSTEDE YOK.
- *  Kullanıcı: "erişemediğini ANLAMALI, körü körüne yazmamalı" — bu, özrü döküman diye yazmayı engeller.
+ * Ajanın "kod tabanını okuyamadım" sinyali/özrü mü? İKİ katman:
+ *  - BİRİNCİL: MYCL_NO_ACCESS belirteci (prompt-yönlendirmeli, kesin).
+ *  - GÜÇLÜ apology-imzaları (tek eşleşme yeter): SADECE "döküman üretemedim" özründe geçer, gerçek feature-doc'ta
+ *    ASLA — ör. "no features could be documented", "nothing was inventable". (cave5 canlı: İngilizce apology bunu
+ *    içeriyordu ama eski konservatif eşik KAÇIRIYORDU → yanlış-negatif, mahkemenin uyardığı. Düzeltildi.)
+ *  - ZAYIF açık-başarısızlık ibareleri (≥2 ayrı): tek tesadüfi "erişilemedi" (ör. "dosya-erişilemedi hatalarını
+ *    yönetir") tetiklemesin (mahkeme false-pozitif). Olumlu formlar (erişilebilir/erişildi) eşleşmez.
  */
 export function isNoAccessDoc(parsed: { features_md?: string; tech_doc_md?: string }): boolean {
   const f = (parsed.features_md ?? "").trim();
   if (/^MYCL_NO_ACCESS/i.test(f)) return true;
   const blob = `${parsed.features_md ?? ""}\n${parsed.tech_doc_md ?? ""}`.toLowerCase();
-  const markers = [
-    // TR — açık başarısızlık (olumsuz form; olumlu "erişilebilir/erişildi" eşleşmez):
+  const strong = [
+    "no features could be documented", "no functionality could be documented", "could not be documented",
+    "nothing was inventable", "without real code", "hiçbir özellik belgelenem", "hiçbir özellik bulunam",
+  ];
+  if (strong.some((m) => blob.includes(m))) return true;
+  const weak = [
+    // TR — olumsuz form (olumlu "erişilebilir/erişildi" eşleşmez):
     "erişilemiyor", "erişilemedi", "erişemedim", "ulaşamadım", "okuyamadım", "inceleyemedim", "göremedim",
     "okuma izni reddedil", "izni reddedil", "erişim engellendi", "erişim reddedil",
-    "kod tabanına erişilem", "koda erişilem", "hiçbir özellik belgelenem",
-    // EN — açık başarısızlık:
-    "permission denied", "access denied", "cannot access", "couldn't access", "could not access",
-    "unable to read", "could not read", "no files could", "no features could",
+    "kod tabanına erişilem", "koda erişilem",
+    // EN — açık başarısızlık (cave5: "is inaccessible", "reads denied", "denied by permission"):
+    "is inaccessible", "reads denied", "denied by permission", "permission denied", "access denied",
+    "cannot access", "couldn't access", "could not access", "unable to read", "could not read",
   ];
-  const hits = markers.filter((m) => blob.includes(m)).length;
-  return (blob.length < 300 && hits >= 2) || hits >= 3;
+  const hits = weak.filter((m) => blob.includes(m)).length;
+  return hits >= 2;
 }
 
 /**

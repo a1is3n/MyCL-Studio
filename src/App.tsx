@@ -582,12 +582,11 @@ function App() {
   // (`user_message` değil) → salt-okunur danışma, pipeline tetiklenmez.
   // YZLLM 2026-06-19: backend SORU-modu OTURUM GEÇMİŞİ tutar (follow-up'lar bağlansın). Toggle değişince
   // backend'e bildir: aç → chat'e hatırlatma + temiz geçmiş; kapa → geçmiş tamamen silinir.
-  const [questionMode, setQuestionMode] = useState<boolean>(
-    () => localStorage.getItem("mycl_question_mode") === "1",
-  );
+  // YZLLM: soru modu İLK AÇILIŞTA KAPALI olsun → her açılışta false başlar (önceki on-durumu hatırlanmaz;
+  // persistans kaldırıldı). Kullanıcı oturum içinde açabilir; sonraki açılışta yine kapalı gelir.
+  const [questionMode, setQuestionMode] = useState<boolean>(false);
   const handleQuestionModeToggle = (enabled: boolean): void => {
     setQuestionMode(enabled);
-    localStorage.setItem("mycl_question_mode", enabled ? "1" : "0");
     void orch.send({ kind: "set_question_mode", data: { enabled } });
   };
 
