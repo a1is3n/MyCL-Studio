@@ -403,6 +403,38 @@ export async function isExistingProject(projectRoot: string): Promise<boolean> {
   return false;
 }
 
+/**
+ * Açılan bir klasörü ÜÇ duruma ayırır (tamamen DETERMİNİSTİK FS; LLM/relevance YOK):
+ *   - "mycl"    : zaten bir MyCL projesi (`.mycl/state.json` VEYA `.mycl/spec.md` var) → normal açılış.
+ *   - "foreign" : MyCL state'i YOK ama gerçek kod var (manifest veya kaynak dizini) → ONBOARDING hedefi.
+ *   - "empty"   : ne MyCL state'i ne kod → greenfield (sıfırdan üretim).
+ *
+ * `isExistingProject`'ten BİLEREK ayrı: o `.mycl/spec.md`'yi de "kod" sayar. Burada `.mycl/*` MyCL
+ * metadata'sı ÖNCE "mycl" tarafına gider; "foreign/empty" kararı YALNIZ proje kaynağına (manifest/src)
+ * bakar → kısmi-MyCL projeyi "yabancı" sanma (false-positive) engellenir. Bu yüzden `classifyOpenedFolder`
+ * `isExistingProject`'i ÇAĞIRMAZ; kendi FS kontrollerini yapar (mahkeme Mercek-B notu).
+ *
+ * Fail-safe: tüm FS kontrolleri (fileExists/dirExists) hatayı yutup false döner → okunamayan/izin-kısıtlı
+ * klasör "empty" olur, ASLA throw etmez (her açılışı bozma riski yok — mahkeme Mercek-C break-risk).
+ */
+export async function classifyOpenedFolder(
+  projectRoot: string,
+): Promise<"empty" | "foreign" | "mycl"> {
+  if (
+    (await fileExists(join(projectRoot, ".mycl", "state.json"))) ||
+    (await fileExists(join(projectRoot, ".mycl", "spec.md")))
+  ) {
+    return "mycl";
+  }
+  for (const m of PROJECT_MANIFESTS) {
+    if (await fileExists(join(projectRoot, m))) return "foreign";
+  }
+  for (const d of SOURCE_DIRS) {
+    if (await dirExists(join(projectRoot, d))) return "foreign";
+  }
+  return "empty";
+}
+
 // .mycl (MyCL state) + devs (spec çalışma alanı) + ASLA-deliverable-olmayan türetilen/cache dizinleri.
 // NOT (mahkeme): dist/build/out BİLEREK ÇIKARILDI — bunlar gerçek bir çıktı/deliverable dizini OLABİLİR
 // (ör. Go `-o out/`, statik `dist/`), blocklist'te false-fail üretirler. Boş-build'de zaten hiçbiri yok

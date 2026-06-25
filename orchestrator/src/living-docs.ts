@@ -4,7 +4,7 @@
 // bunları okuyup grounded soru sorar — gereksiz "X özelliği var mı?" sorusunu sormaz.
 //
 // Backend: ORKESTRATÖR rolü (v15.13 — ana ajana/codegen'e GİTMEZ), abonelik/CLI modunda
-// runClaudeCli (Read/Grep/Glob/Bash açık → ajan kodu inceler). Ajan tek bir {"kind":"docs",...}
+// runClaudeCli (Read/Grep/Glob açık → ajan kodu inceler; Bash KALDIRILDI — güvenlik). Ajan tek bir {"kind":"docs",...}
 // JSON bloğu döner; YAZIMI MyCL yapar (forced-tool yok; ajan .mycl dışına yazamaz). Approval YOK.
 // Fail → görünür uyarı + audit, ana akışı BLOKLAMAZ (yan-yarar, sessiz değil).
 
@@ -111,7 +111,7 @@ export function buildLivingDocsPrompt(opts: {
     USER_GUIDE_INSTRUCTION: guideInstruction,
     // Her zaman: o iterasyonun TR teknik dökümanı. Bootstrap/ilk-açılışta DERİN tarama (klasör ağacı, her modül/route/endpoint).
     TECH_DOC_INSTRUCTION:
-      "Always produce **tech_doc_md** — a TURKISH technical document for THIS iteration: what was built/changed and WHY (architecture, key design decisions, modules/routes/endpoints/stores). **YZLLM 2026-06-15: her konuyu KISA ve ÖZ anlat** — her başlık altında 1-3 cümle/birkaç madde, gereksiz tekrar/dolgu YOK; okuyan hızlıca kavrasın. Tek `## <konu>` başlığı per topic, altında özet. In bootstrap/first-open mode, deeply walk the folder + subfolders (Glob/Bash) so NO module/route/endpoint/store is missed — but still describe each CONCISELY (kapsam tam, anlatım kısa). No invention. File paths and code identifiers stay verbatim (English); prose in Turkish.",
+      "Always produce **tech_doc_md** — a TURKISH technical document for THIS iteration: what was built/changed and WHY (architecture, key design decisions, modules/routes/endpoints/stores). **YZLLM 2026-06-15: her konuyu KISA ve ÖZ anlat** — her başlık altında 1-3 cümle/birkaç madde, gereksiz tekrar/dolgu YOK; okuyan hızlıca kavrasın. Tek `## <konu>` başlığı per topic, altında özet. In bootstrap/first-open mode, deeply walk the folder + subfolders (Glob/Grep/Read) so NO module/route/endpoint/store is missed — but still describe each CONCISELY (kapsam tam, anlatım kısa). No invention. File paths and code identifiers stay verbatim (English); prose in Turkish.",
     HELP_PAGES_INSTRUCTION: helpPagesInstruction,
   });
 }
@@ -319,8 +319,12 @@ export async function updateLivingDocs(state: State, config: MyclConfig): Promis
       modelId: docsModel,
       extraEnv: docsCli.extraEnv, // ⑥ z.ai ise claude CLI'yi z.ai endpoint'ine yönlendir
       cwd: state.project_root,
-      allowedTools: ["Read", "Grep", "Glob", "Bash"],
-      disallowedTools: READ_ONLY_DISALLOWED_TOOLS, // salt-okunur: JSON döner, MyCL yazar; alt-ajan yasak
+      allowedTools: ["Read", "Grep", "Glob"],
+      // salt-okunur: ajan kodu Read/Grep/Glob ile gezip JSON döner, dosyaları MyCL'in kendi Node kodu yazar.
+      // Bash KALDIRILDI (çapraz-aile mahkeme): Bash açıkken salt-okunur niyete rağmen `cat > dosya << EOF`
+      // ile YABANCI projenin kaynağını ezebiliyordu (tool-policy.ts belgeli kaçış). Doküman-üretimi için
+      // Read/Grep/Glob yeterli — onboarding'in non-destructive garantisi buna dayanır.
+      disallowedTools: READ_ONLY_DISALLOWED_TOOLS, // Write/Edit/alt-ajan yasak
       effort: selectEffortForTask("verification", config.claude_code_flags.effort), // oto-efor: doküman güncelleme hafif iş
       onText: (t) => emitClaudeStream({ sub: "text", text: t }),
       observer: (tu) =>

@@ -8,7 +8,7 @@ import { describe, expect, it, beforeEach, afterEach } from "vitest";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { mkdtemp, rm, writeFile, mkdir } from "node:fs/promises";
-import { buildCodebaseSnapshot, hasDeliverable, isExistingProject } from "../src/phase-1-codebase-probe.js";
+import { buildCodebaseSnapshot, classifyOpenedFolder, hasDeliverable, isExistingProject } from "../src/phase-1-codebase-probe.js";
 
 describe("phase-1-codebase-probe · buildCodebaseSnapshot", () => {
   let projectRoot: string;
@@ -167,6 +167,67 @@ describe("phase-1-codebase-probe · isExistingProject", () => {
   it("sadece README → false (kaynak/manifest yok)", async () => {
     await writeFile(join(projectRoot, "README.md"), "# x", "utf-8");
     expect(await isExistingProject(projectRoot)).toBe(false);
+  });
+});
+
+describe("phase-1-codebase-probe · classifyOpenedFolder (onboarding sınıflandırma)", () => {
+  let projectRoot: string;
+  beforeEach(async () => {
+    projectRoot = await mkdtemp(join(tmpdir(), "mycl-classify-"));
+  });
+  afterEach(async () => {
+    await rm(projectRoot, { recursive: true, force: true });
+  });
+
+  it("boş klasör → 'empty' (greenfield)", async () => {
+    expect(await classifyOpenedFolder(projectRoot)).toBe("empty");
+  });
+
+  it("yalnız README → 'empty' (kaynak/manifest yok)", async () => {
+    await writeFile(join(projectRoot, "README.md"), "# x", "utf-8");
+    expect(await classifyOpenedFolder(projectRoot)).toBe("empty");
+  });
+
+  it("package.json var, .mycl yok → 'foreign' (onboarding hedefi)", async () => {
+    await writeFile(join(projectRoot, "package.json"), '{"name":"x"}', "utf-8");
+    expect(await classifyOpenedFolder(projectRoot)).toBe("foreign");
+  });
+
+  it("go.mod (non-node) var, .mycl yok → 'foreign'", async () => {
+    await writeFile(join(projectRoot, "go.mod"), "module x\n", "utf-8");
+    expect(await classifyOpenedFolder(projectRoot)).toBe("foreign");
+  });
+
+  it("src/ dizini var, manifest+.mycl yok → 'foreign'", async () => {
+    await mkdir(join(projectRoot, "src"), { recursive: true });
+    expect(await classifyOpenedFolder(projectRoot)).toBe("foreign");
+  });
+
+  it(".mycl/state.json → 'mycl' (zaten MyCL projesi)", async () => {
+    await mkdir(join(projectRoot, ".mycl"), { recursive: true });
+    await writeFile(join(projectRoot, ".mycl", "state.json"), "{}", "utf-8");
+    expect(await classifyOpenedFolder(projectRoot)).toBe("mycl");
+  });
+
+  it(".mycl/spec.md → 'mycl'", async () => {
+    await mkdir(join(projectRoot, ".mycl"), { recursive: true });
+    await writeFile(join(projectRoot, ".mycl", "spec.md"), "# spec", "utf-8");
+    expect(await classifyOpenedFolder(projectRoot)).toBe("mycl");
+  });
+
+  // KRİTİK false-positive eleme (mahkeme Mercek-B): kod VAR + .mycl/spec.md VAR (kısmi/üretilen MyCL
+  // projesi) → 'mycl' olmalı, 'foreign' DEĞİL. classifyOpenedFolder isExistingProject'i naif çağırsaydı
+  // (o .mycl/spec.md'yi "kod" sayıyor ama manifesti de görür) yine mycl derdi; asıl tuzak: .mycl/* önce.
+  it("kod + .mycl/spec.md birlikte → 'mycl' (foreign DEĞİL)", async () => {
+    await writeFile(join(projectRoot, "package.json"), '{"name":"x"}', "utf-8");
+    await mkdir(join(projectRoot, ".mycl"), { recursive: true });
+    await writeFile(join(projectRoot, ".mycl", "spec.md"), "# spec", "utf-8");
+    expect(await classifyOpenedFolder(projectRoot)).toBe("mycl");
+  });
+
+  it("olmayan/erişilemez kök → 'empty' (fail-safe, throw etmez)", async () => {
+    const fakeRoot = join(tmpdir(), "mycl-classify-nonexistent-" + Date.now());
+    expect(await classifyOpenedFolder(fakeRoot)).toBe("empty");
   });
 });
 
