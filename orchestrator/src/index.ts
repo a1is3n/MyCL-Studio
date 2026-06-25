@@ -5631,6 +5631,15 @@ async function handleRunPhase(
 
   try {
     const result = await runPhaseOnce(phaseId, spec);
+    if (result === "deferred") {
+      // FROZEN-GOAL #10: Faz 6 'deferred' (UI inceleme PARKI) bir BAŞARI yolu — fail DEĞİL. Eski kod isSuccess=false
+      // sayıp "❌ başarısız" yazıyor + pending_ui_review set ETMİYORDU → iş reconcile'da SESSİZCE orphan-drop oluyordu.
+      // Normal advance yoluyla aynı: park bayrağı + 'waiting' statüsü (Phase6 inceleme istemini zaten yazdı).
+      runtime.state = { ...runtime.state, pending_ui_review: true, updated_at: Date.now() };
+      await saveState(runtime.state);
+      emitPhaseChanged(phaseId, phaseId, "waiting");
+      return;
+    }
     // v15.7 (2026-05-27): result mapping düzeltildi. LLM controller'lar
     // "complete"/"fail"; mechanical "pass"/"fail"/"skipped". Önceden sadece
     // "complete" başarı sayılıyordu → mechanical pass "error" statüsüne

@@ -182,8 +182,14 @@ export class Phase1Controller {
     const outcome = await this.base.run();
 
     if (outcome.kind === "approved") {
-      const summary = String(outcome.approvalInput.summary ?? "");
-      this.approvedSummary = summary || null;
+      const summary = String(outcome.approvalInput.summary ?? "").trim();
+      // FROZEN-GOAL #7: boş özet = geçersiz onay. Eski kod yine 'complete' dönüp intent_summary=null ile
+      // ilerliyordu → sonraki TÜM fazlar anlamsız çıktı üretiyordu (sessiz-bad-proceed). Boşsa fail → escalate.
+      if (!summary) {
+        this.lastFailReason = "Faz 1: niyet özeti boş — onay geçersiz (özet alanı doldurulmalı)";
+        return "fail";
+      }
+      this.approvedSummary = summary;
       await appendAudit(this.state.project_root, {
         ts: Date.now(),
         phase: 1,
