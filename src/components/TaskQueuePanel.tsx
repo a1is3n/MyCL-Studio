@@ -21,6 +21,8 @@ interface Props {
   onClose: () => void;
   /** Item üzerine tıklama — App.tsx Faz 1 kontrolünü yapar. */
   onItemApply: (item: TaskQueueItem) => void;
+  /** Düşen işi YENİDEN gönder (faz-bağımsız; App.tsx sendUserMessage'a köprüler). FROZEN-GOAL #17. */
+  onItemReadd: (item: TaskQueueItem) => void;
   onItemDelete: (id: string) => void;
 }
 
@@ -76,6 +78,7 @@ export function TaskQueuePanel({
   open,
   items,
   onClose,
+  onItemReadd,
   onItemDelete,
 }: Props): ReactNode {
   if (!open) return null;
@@ -143,6 +146,16 @@ export function TaskQueuePanel({
                     <span className="task-queue-locked" title="Tamamlandı — tekrar uygulanamaz">
                       🔒 Kilitli
                     </span>
+                  )}
+                  {st === "dropped" && (
+                    <button
+                      type="button"
+                      className="task-queue-btn task-queue-btn-readd"
+                      onClick={() => onItemReadd(item)}
+                      title="Düşen işi yeniden gönder (yeni mesaj olarak)"
+                    >
+                      Yeniden Ekle
+                    </button>
                   )}
                   {!isRunning && (
                     <button

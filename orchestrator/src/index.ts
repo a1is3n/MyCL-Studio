@@ -2261,10 +2261,14 @@ async function executeAgentDecision(
           // YZLLM 2026-06-17: "UI'yi onayla" derken UI tarayıcıda AÇIK olmalı. Bu reask yolu (controller DEĞİL)
           // dev-server'ı garantilemiyordu → boot-resume Faz 6'da / Faz 5 atlanmışsa dev-server yok → kullanıcı
           // neyi onaylayacağını göremiyordu. Sormadan ÖNCE dev-server ayakta mı bak, değilse başlat (controller ile aynı).
-          await ensureDevServerForReview(runtime.state, runtime.config);
+          // FROZEN-GOAL #11: ensureDevServerForReview dönüşü yok sayılıyordu → dev-server başlamasa bile
+          // "UI'yi onayla" deniyordu (çalışmayan uygulamayı incele). ok'a göre mesajı ayır.
+          const dev = await ensureDevServerForReview(runtime.state, runtime.config);
           emitChatMessage(
             "system",
-            "👀 Bildirdiklerin kuyruğa eklendi. Bu işin UI'sini onaylıyor musun → `tamam` (Faz 7'e geçeriz) · düzeltme istersen yaz · `iptal` ile durdur.",
+            dev.ok
+              ? "👀 Bildirdiklerin kuyruğa eklendi. Bu işin UI'sini onaylıyor musun → `tamam` (Faz 7'e geçeriz) · düzeltme istersen yaz · `iptal` ile durdur."
+              : "⚠️ Bildirdiklerin kuyruğa eklendi AMA dev-server otomatik başlatılamadı — UI'yi inceleyemezsin. Terminalde `npm run dev` ile başlat, sonra `tamam`/`iptal` yaz (ya da düzeltme iste).",
           );
         }
         return;

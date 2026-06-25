@@ -1079,6 +1079,12 @@ function App() {
     sendUserMessage(item.text);
   };
 
+  const handleTaskReadd = (item: TaskQueueItem) => {
+    // FROZEN-GOAL #17: düşen işi FAZ-BAĞIMSIZ yeniden gönder (yeni kullanıcı mesajı → orkestratör yönlendirir).
+    // handleTaskApply Faz 1'e kapılı; düşen iş genelde başka fazda olduğu için ayrı, kapısız yol.
+    sendUserMessage(item.text);
+  };
+
   const answerAskq = (id: string, selected: string | string[]) => {
     const display = Array.isArray(selected)
       ? selected.length === 0
@@ -1385,6 +1391,7 @@ function App() {
         currentPhase={mainState.phase}
         onClose={() => setTaskQueueOpen(false)}
         onItemApply={handleTaskApply}
+        onItemReadd={handleTaskReadd}
         onItemDelete={handleTaskDelete}
       />
       <TokenTimelinePanel

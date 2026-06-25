@@ -11,7 +11,6 @@ import type { QaAskqBackend } from "./base/qa-askq-controller.js";
 import { createQaAskqBackend } from "./base/qa-askq-cli-backend.js";
 import type { ToolDef } from "./claude-api.js";
 import type { MyclConfig } from "./config.js";
-import { emitError } from "./ipc.js";
 import { log } from "./logger.js";
 import { buildCodebaseSnapshot } from "./phase-1-codebase-probe.js";
 import { buildRelevantProjectContext } from "./relevance/injectors.js";
@@ -100,7 +99,8 @@ export class Phase1Controller {
 
     if (!this.spec.askq_config) {
       log.error("phase-1", "askq_config missing in spec");
-      emitError("phase-1 askq_config missing", null);
+      // FROZEN-GOAL #8: emitError + failPhase = çift bildirim. lastFailReason'a yaz → failPhase TEK mesajla yüzeye çıkarır.
+      this.lastFailReason = "Faz 1: askq_config eksik (spec hatası).";
       return "fail";
     }
 
@@ -111,7 +111,7 @@ export class Phase1Controller {
       log.info("phase-1", "intent translated", { out_len: intent_en.length });
     } catch (err) {
       log.error("phase-1", "translator failed (intent)", err);
-      emitError("translator failed (intent)", String(err));
+      this.lastFailReason = `Faz 1: niyet çevirisi başarısız — ${String(err).slice(0, 150)}`;
       return "fail";
     }
 
@@ -161,7 +161,7 @@ export class Phase1Controller {
       });
     } catch (err) {
       log.error("phase-1", "template load failed", err);
-      emitError("template load failed", String(err));
+      this.lastFailReason = `Faz 1: şablon yüklenemedi — ${String(err).slice(0, 150)}`;
       return "fail";
     }
     // Escalation (YZLLM 2026-06-11): model+efor merdivenden (escalation_rung set ise); değilse eski config[role].
