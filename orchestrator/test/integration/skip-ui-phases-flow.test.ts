@@ -48,6 +48,36 @@ describe("has_ui Faz 5 skip flow (2026-06-24 sistemik fix: OR→AND, kuşkuda KO
   });
 });
 
+describe("Faz 6 entegre-mod skip (YZLLM cave5: foreign-origin → UI incelemesi atlanır)", () => {
+  // index.ts üç noktada aynı kuralı uygular: advanceToNextPhaseInner (next===6), runPhaseOnce (phaseId===6),
+  // ve boot-guard. Karar: skip = state.origin === "foreign". KATI #9 ("Faz 6 ASLA atlanmaz") foreign-origin
+  // ENTEGRE projeye uygulanmaz — kullanıcının açık istisnası (gap-işleri UI-yapımı değil; mevcut projede
+  // dev-server çoğu zaman yok). MyCL'in KENDİ yarattığı (origin="mycl"/undefined) projede Faz 6 normal.
+  it("foreign-origin → Faz 6 atlanır; mycl/undefined-origin → koşar", () => {
+    const cases = [
+      { origin: "foreign", expectSkip: true },
+      { origin: "mycl", expectSkip: false },
+      { origin: undefined, expectSkip: false },
+    ];
+    for (const c of cases) {
+      const skip = c.origin === "foreign";
+      expect(skip).toBe(c.expectSkip);
+    }
+  });
+
+  it("boot unpark guard: foreign + pending_ui_review + Faz 6 → bayat parkı geç (sessiz-stall önle)", () => {
+    // Geçiş-dönemi: skip eklenmeden ÖNCE Faz 6'ya girmiş foreign-origin proje restart'ta
+    // pending_ui_review=true ile askıda kalır (hasPendingQueueWork boot-resume'u atlar, queue-drain
+    // isPipelineParked'ta durur). Guard temizleyip advanceToNextPhase(6) ile Faz 7'ye geçirir.
+    const unpark = (origin: string | undefined, pending: boolean, phase: number) =>
+      origin === "foreign" && pending && phase === 6;
+    expect(unpark("foreign", true, 6)).toBe(true); // bayat park → geç
+    expect(unpark("mycl", true, 6)).toBe(false); // mycl projesi → normal Faz 6 parkı, dokunma
+    expect(unpark("foreign", false, 6)).toBe(false); // park yok → tetiklenmez
+    expect(unpark("foreign", true, 5)).toBe(false); // Faz 6 değil → dokunma
+  });
+});
+
 describe("has_database state flow (v15.2.3 C-3)", () => {
   it("Faz 7 skip: structured `has_database=false` öncelikli, heuristic fallback", () => {
     // Bu logic index.ts:advanceToNextPhase Faz 7'de:

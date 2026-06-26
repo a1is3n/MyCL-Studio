@@ -1047,6 +1047,26 @@ async function handleOpenProject(path: string, integrate = false): Promise<void>
         "🖥️ Bekleyen \"Playwright headless\" tweak'i uygulanmadı — headless:false sabit kuralın (browser görünür kalır, testi gözleyebilirsin). Kaldığım yerden devam ediyorum.",
       );
     }
+    // YZLLM (cave5): ENTEGRE (foreign) projede geçiş-dönemi Faz 6 parkını temizle. Skip eklenmeden ÖNCE
+    // Faz 6'ya girmiş foreign-origin proje restart'ta pending_ui_review=true ile askıda kalır
+    // (hasPendingQueueWork boot-resume'u atlar + queue-drain isPipelineParked'ta durur → SESSİZ STALL,
+    // DONMUŞ HEDEF #1 ihlali). Foreign'de Faz 6 UI-incelemesi YOK: bu bayat parkı geçip ilerle. Yeni
+    // projeler skip yoluyla bu parka hiç girmez → guard tek-shot (advanceToNextPhase pending_ui_review'i temizler).
+    if (
+      runtime.state.origin === "foreign" &&
+      runtime.state.pending_ui_review &&
+      runtime.state.current_phase === 6
+    ) {
+      emitChatMessage(
+        "system",
+        "Faz 6 (UI İncelemesi) entegre modunda atlanıyor — kaldığım yerden (Faz 7) devam ediyorum.",
+      );
+      void advanceToNextPhase(6 as PhaseId).catch((e) => {
+        log.error("orchestrator", "boot integrate Faz6 unpark failed", e);
+        emitError("boot resume failed", String(e));
+      });
+      return; // boot check skip — pipeline Faz 7'den devam ediyor
+    }
     // v15.7 (2026-05-26): Phase 2-9 boot-resume (production readiness madde 08).
     // Faz 1 dışı yarım kalmış faz varsa advanceToNextPhase(N-1) ile restart.
     // Phase 5 tweak mode hariç (pending_ui_tweak akışı zaten kendi handler'ı
@@ -3604,6 +3624,32 @@ async function advanceToNextPhaseInner(from: PhaseId): Promise<void> {
     emitPhaseChanged(cur, next, "running");
     log.info("orchestrator", "phase advance", { from: cur, to: next });
 
+    // YZLLM (cave5): ENTEGRE (foreign-origin) projede Faz 6 (UI İncelemesi) ATLANIR. Gap-task'lar UI-yapımı
+    // değil (test/güvenlik/parmak-izi vb.); mevcut projede manuel UI-inceleme park'ı uygun değil + dev-server
+    // çoğu zaman yok (mevcut projenin kendi toolchain'i). Bu, "Faz 6 ASLA atlanmaz" katı kuralının BİLİNÇLİ
+    // entegre-mod istisnasıdır (kullanıcı açıkça istedi). phase-6-complete audit'i KORUNUR (sonraki gate'ler bekler).
+    if (next === 6 && state.origin === "foreign") {
+      await appendAuditModule(state.project_root, {
+        ts: Date.now(),
+        phase: 6,
+        event: "phase-6-skipped-integrate",
+        caller: "mycl-orchestrator",
+        detail: "origin=foreign → entegre modunda UI incelemesi atlanır",
+      });
+      await appendAuditModule(state.project_root, {
+        ts: Date.now(),
+        phase: 6,
+        event: "phase-6-complete",
+        caller: "mycl-orchestrator",
+      });
+      emitChatMessage(
+        "system",
+        "Faz 6 (UI İncelemesi) atlandı — entegre modunda yapılmaz (mevcut projede gap-işleri UI-yapımı değil; sürdürülüyor).",
+      );
+      log.info("orchestrator", "phase 6 skipped (integrate mode)", { origin: state.origin });
+      cur = 6 as PhaseId;
+      continue;
+    }
     // v15.6 (2026-05-24): Faz kapsamı (needed_phases) — Faz 3 LLM önerisini
     // kullanıcı onayladıysa state.needed_phases set; opsiyonel fazlar
     // (5/6/7/8) kapsam dışında ise sessizce atlanır + audit event.
@@ -5744,6 +5790,31 @@ async function runPhaseOnce(
   if (!runtime.state || !runtime.config) return "fail";
   const state = runtime.state;
   const cfg = runtime.config;
+
+  // YZLLM (cave5): ENTEGRE (foreign-origin) projede Faz 6 (UI İncelemesi) tek-shot/resume yolunda da ATLANIR
+  // — advanceToNextPhaseInner'daki skip ile aynı kural. Mevcut projede UI-inceleme parkı uygun değil; manuel
+  // "Çalıştır" veya deferred-park resume bu noktaya düşse bile incelemeyi koşmadan geç. phase-6-complete KORUNUR.
+  if (phaseId === 6 && state.origin === "foreign") {
+    await appendAuditModule(state.project_root, {
+      ts: Date.now(),
+      phase: 6,
+      event: "phase-6-skipped-integrate",
+      caller: "mycl-orchestrator",
+      detail: "origin=foreign → entegre modunda UI incelemesi atlanır (runPhaseOnce)",
+    });
+    await appendAuditModule(state.project_root, {
+      ts: Date.now(),
+      phase: 6,
+      event: "phase-6-complete",
+      caller: "mycl-orchestrator",
+    });
+    emitChatMessage(
+      "system",
+      "Faz 6 (UI İncelemesi) atlandı — entegre modunda yapılmaz (mevcut projede gap-işleri UI-yapımı değil).",
+    );
+    log.info("orchestrator", "phase 6 skipped (integrate mode, runPhaseOnce)", { origin: state.origin });
+    return "skipped";
+  }
 
   // v15.7 (2026-05-26): Production readiness madde 15 — Tool risk taxonomy.
   // Phase başlamadan önce ajanın risk_level'ini audit'e yaz. High-risk

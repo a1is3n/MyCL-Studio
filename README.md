@@ -83,15 +83,19 @@ gördüğü — var olan bir projeyi MyCL'e taşır:
   dil/framework ve README + git geçmişinden "neden" türetilir (ağır graph DB yok).
 - **MyCL dosyaları yalnız `.mycl/` altına kurulur:** `state.json`, `project-map.json`,
   yaşayan dökümantasyon (`features.md` / `tech-doc.md`) ve `onboarding-report.md`.
-- **Eksikler GAP-RAPORU olur, otomatik uygulanmaz:** test / responsive / güvenlik /
-  parmak-izi gibi kaynak-değiştiren MyCL standartları rapora yazılır; her biri **senin
-  onayınla** normal gate'li iterasyonda yapılır.
+- **Eksikler iş-listesine OTOMATİK eklenir + sırayla yapılır:** test / responsive /
+  güvenlik / parmak-izi gibi kaynak-değiştiren MyCL standartları GAP-raporu olur, her biri
+  iş-listesine eklenip **onay beklemeden** normal gate'li iterasyonda sırayla işlenir.
+- **Entegre modunda oto-cevap KAPALI:** mock mu gerçek-veritabanı mı gibi kararlar otomatik
+  verilmez — sana sorulur. **Faz 6 (UI İncelemesi) de atlanır** (gap-işleri UI-yapımı değil,
+  mevcut projede dev-server çoğu zaman yoktur).
 - **Mevcut projeyi BOZMAZ:** yabancı kaynak dosyalarına dokunulmaz; MyCL yabancı bir
   projenin `vite.config`'ini onaysız düzenlemez ve mevcut `.gitignore`'a yalnız varsa
-  ekler (yeni oluşturmaz).
+  ekler (yeni oluşturmaz). Okunamayan (sandbox) bir proje, ev-dışı **"MyCL Projeler"**
+  klasörüne kopyalanıp orada işlenir; orijinal dosyalara dokunulmaz.
 
-Onboarding bittiğinde proje birinci-sınıf bir MyCL projesi olur; sonraki tüm
-geliştirmeler normal pipeline'dan (Faz 1 → 17) geçer.
+Onboarding bittiğinde proje birinci-sınıf bir MyCL projesi olur; sonraki geliştirmeler
+normal pipeline'dan geçer (entegre modunda Faz 6 atlanır).
 
 ## Codegen backend'leri
 
