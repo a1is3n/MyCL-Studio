@@ -1,5 +1,14 @@
 ## 2026-06-26
 
+- **fix(dil): kullanıcıya yazılan Türkçe'de tire ile uydurma bileşik kullanılmaz (YZLLM: "anlamıyorum, kullanma"):**
+  YZLLM uyardı: "önceden-var" gibi iki kelimeyi tire ile birleştirip uydurma bileşik yapma — okunmuyor; MyCL de
+  kullanmasın. Görünür mesaj düzeltildi ([phase-8.ts](orchestrator/src/phase-8.ts): "önceden-var kırmızıdan" →
+  "zaten önceden başarısız olan testlerden"). MyCL'e öğretildi: [orchestrator-system.md](assets/agent-prompts/orchestrator-system.md)
+  Dil disiplini bölümüne kural + [translator.ts](orchestrator/src/translator.ts) EN→TR sistem prompt'una 8. kural
+  (Türkçe üretirken tire-bileşik yapma — bu sadık çeviridir, yeniden ifade değil; bileşik bozuk Türkçe). DOĞRU yazım:
+  "önceden var olan", "yaşayan dökümantasyon", "sahte yeşil". Tire yalnız gerçek teknik jetonda (dosya yolu, kod adı,
+  CLI bayrağı, model adı). Koddaki sabit string'lerde kalan yüzlerce örnek ayrı bir süpürmeyle temizlenecek. check yeşil.
+
 - **feat(entegre/recent): "Proje Aç" ile açılan proje son projelerde görünür — okunamayan-proje KOPYAsı dahil:**
   YZLLM ("entegre modunda açtığım proje de son projelere gelsin"): MyCL okunamayan (ev-altı/sandbox) bir projeyi
   ev-DIŞI `/Users/Shared/MyCL Projeler/<isim>-<hash>`'e kopyalayıp KOPYAYI açıyor (`open_project_request`), ama o

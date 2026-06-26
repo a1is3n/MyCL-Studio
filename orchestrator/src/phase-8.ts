@@ -526,7 +526,7 @@ export class Phase8Controller {
       // Profil test komutu yoksa / runner ayrıştırılamazsa baseline=null → anchor mutlak davranışa düşer (güvenli).
       const baseCmd = await resolveMechanicalCmd({ type: "profile_key", key: "test" }, this.state);
       if (baseCmd) {
-        emitChatMessage("system", "📋 Fix öncesi test temeli alınıyor (regresyonu önceden-var kırmızıdan ayırmak için)…");
+        emitChatMessage("system", "📋 Düzeltme öncesi test temeli alınıyor (gerçek regresyonu, zaten önceden başarısız olan testlerden ayırmak için)…");
         const baseRes = await this.runCmdResult(baseCmd);
         if (!isMissingCommand(baseRes)) {
           const failures = parseFailures(`${baseRes.stdout}\n${baseRes.stderr}`);

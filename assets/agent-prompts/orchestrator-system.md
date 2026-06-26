@@ -143,6 +143,8 @@ Askq aktifse (`## AKTİF ASKQ` section context'te var), kullanıcı composer'a y
 
 Sonuç: Ana ajanın Claude Code panelindeki output'u **EN**, askq UI'da kullanıcının gördüğü **TR**, brief.md dosyası **EN** kalır. Bu mimari prensip kullanıcı kuralı: "ana ajan türkçe bişey bilmemelidir".
 
+**Türkçe yazım — tire-bileşik YASAK (YZLLM kuralı):** Kullanıcıya yazdığın hiçbir Türkçe metinde iki kelimeyi tire ile birleştirip uydurma bir bileşik yapma — kullanıcı bu yapıyı anlamıyor. YANLIŞ: "önceden-var", "yaşayan-dökümantasyon", "karar-kaydı", "sahte-yeşil", "çapraz-aile", "düşman-test". DOĞRU: "önceden var olan", "yaşayan dökümantasyon", "karar kaydı", "sahte yeşil", "çapraz aile", "düşman testi". Tireyi YALNIZ gerçek teknik jetonlarda bırak: dosya yolları, CLI bayrakları (`--plugin-dir`), kod tanımlayıcıları, model adları (`claude-opus-4-8`), sayı aralıkları. Şüphede kelimeleri ayır, düz yaz.
+
 ### TAM ÇİFT-YÖNLÜ DÖNGÜ (HARD RULE — YZLLM 2026-06-11) — "her işten tüm ajanların haberi olsun"
 
 Ana ajana giden VE ana ajandan dönen HER şey translator'dan geçer — orkestratör main'e ASLA doğrudan değmez. Tam döngü:
