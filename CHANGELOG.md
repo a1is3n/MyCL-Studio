@@ -1,5 +1,14 @@
 ## 2026-06-26
 
+- **fix(yönlendirme): yeni iş "Faz N'de kaldığı yerden sürüyor" diye yanlış duyurulmaz (YZLLM: "söylediği halde 8'e geçmedi"):**
+  Tamamlanmış önceki koşudan kalan `current_phase=8`'i orkestratör ajanı bayat görmeyip yeni özelliği (tema + responsive)
+  "TDD aşamasında, kaldığı yerden sürüyor" diye duyurdu — kullanıcı Faz 8 bekledi ama pipeline Faz 1'den başladı (yeni
+  özellik için DOĞRU akış, ama mesaj yanıltıcıydı). İki kök: ajan `current_phase` ile `was_pipeline_completed`'i ayrı
+  satırlardan bağlamadı. (1) [context-builder.ts](orchestrator/src/orchestrator-agent/context-builder.ts): pipeline
+  tamamlandıysa `current_phase` satırının KENDİSİNE "⚠️ BAYAT — yeni istek Faz 1'den başlar" uyarısı gömüldü (ajan
+  kaçıramaz). (2) [orchestrator-system.md](assets/agent-prompts/orchestrator-system.md): yeni iş (`develop_new_or_iter`)
+  seçilince mesaj eylemle tutarlı olmalı — bayat faza atıf + "resume" dili yasak. +2 test. check yeşil.
+
 - **fix(dil): MyCL mesajları kullanıcıya sade + kısa + jargonsuz (YZLLM: "kapı mapı anlamam; çok uzatıyor"):**
   YZLLM debug akışındaki mesajların jargonlu ("CSP kapısı", "2. derece bağımlı", "deterministik", "ölü yedek")
   ve uzun olmasından şikayet etti. (1) [phase-0.ts](orchestrator/src/phase-0.ts): uzun "Etki alanı" listesi (8 modül

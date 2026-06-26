@@ -249,7 +249,14 @@ export async function buildAgentContext(
  */
 export function renderContextSection(ctx: AgentContextSnapshot): string {
   const lines: string[] = ["", "---", "", "## CURRENT CONTEXT (live snapshot)", ""];
-  lines.push(`- **current_phase**: ${ctx.current_phase}`);
+  // YZLLM 2026-06-26 ("söylediği halde 8'e geçmedi"): pipeline TAMAMLANDIYSA current_phase BAYATTIR
+  // (biten koşudan kalan sayı). Ajan ayrı `was_pipeline_completed` satırıyla bağlamayıp yeni işi
+  // "Faz N'de kaldığı yerden sürüyor" diye anlatıyordu → bayat uyarısını current_phase satırına GÖM.
+  lines.push(
+    ctx.was_pipeline_completed
+      ? `- **current_phase**: ${ctx.current_phase} ⚠️ STALE — önceki pipeline TAMAMLANDI; bu sayı bitmiş koşudan kalmadır. YENİ bir istek SIFIRDAN Faz 1'den başlar — yeni işi "Faz ${ctx.current_phase}'de kaldığı yerden / TDD aşamasında sürüyor" diye ANLATMA.`
+      : `- **current_phase**: ${ctx.current_phase}`,
+  );
   lines.push(`- **iteration_count**: ${ctx.iteration_count}`);
   lines.push(`- **was_pipeline_completed**: ${ctx.was_pipeline_completed}`);
   lines.push(`- **spec_approved**: ${ctx.spec_approved}`);

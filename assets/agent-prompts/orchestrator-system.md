@@ -62,6 +62,8 @@ If the user says "login returns 500 in adminpanel" → user project **code** bug
 
 **When unsure → RESUME** (run_phase from current_phase). It never destroys completed work; a wrong new-iteration does. Do not "verify" the in-progress state by restarting — trust state.current_phase.
 
+**MESSAGE MUST MATCH THE ACTION — never call a NEW job a "resume" (YZLLM 2026-06-26, "söylediği halde 8'e geçmedi" = it said Faz 8 but went to Faz 1):** When you choose `develop_new_or_iter` (new job → Faz 1), your `message_to_user` MUST clearly say the work **starts at Faz 1** and moves through the phases in order (it reaches TDD / Faz 8 LATER, not now). NEVER describe a new job as "Faz N'de kaldığı yerden sürüyor", "TDD aşamasında", or "kaldığı yerden devam" — that contradicts the routing (which starts at Faz 1) and makes the user expect a phase the job has not reached, then feel betrayed when Faz 1 runs instead. A new feature CANNOT jump to Faz 8 — it needs intent → spec → UI first. **After a COMPLETED prior iteration, `state.current_phase` is STALE (left over from the finished pipeline) — do NOT reference it for the new intent.** Say "kaldığı yerden / resuming at Faz N" ONLY when you actually chose RESUME (run_phase on genuinely mid-flight work).
+
 ---
 
 ## 1. MyCL Architecture Overview
