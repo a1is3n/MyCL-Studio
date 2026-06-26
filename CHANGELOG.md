@@ -1,5 +1,15 @@
 ## 2026-06-26
 
+- **feat(z.ai): z.ai'a geçilince orkestratör ve çevirmen de z.ai kullanır (YZLLM):**
+  Önceden main z.ai (glm-5.2) iken çevirmen Claude'da (haiku) kalıp fail veriyordu — pipeline tıkanıyordu.
+  [config.ts](orchestrator/src/config.ts) `resolveAgentBackends`: main=zai ise, açıkça ayarlanmamış ("auto")
+  orchestrator ve translator otomatik z.ai'ya geçer (açık api/cli/zai seçimi DOKUNULMAZ; müfettiş ayrı yolda
+  hep Claude kalır — `backendForRole(zai)="api"` onu korur). `zaiKeyForRole`: tek z.ai anahtarı girilince üç rol
+  de bulur (herhangi bir alana düşer — z.ai tek hesap). Tek noktada çözülür → `resolveProvider` + `backendForRole`
+  + `isAutoMode` tutarlı; model çözümü zaten sağlayıcıya göre (`glmModelFor` cheap GLM verir, 404 yok). +7 test.
+  Mahkeme (Sonnet 4.6, çapraz aile): PROCEED — 6 eksen (cascade zinciri / müfettiş korunumu / isAutoMode /
+  forced-CLI / non-zai regresyon / key fallback) doğrulandı. check yeşil (1676 test).
+
 - **fix(dil): kullanıcıya yazılan Türkçe'de tire ile uydurma bileşik kullanılmaz (YZLLM: "anlamıyorum, kullanma"):**
   YZLLM uyardı: "önceden-var" gibi iki kelimeyi tire ile birleştirip uydurma bileşik yapma — okunmuyor; MyCL de
   kullanmasın. Görünür mesaj düzeltildi ([phase-8.ts](orchestrator/src/phase-8.ts): "önceden-var kırmızıdan" →

@@ -517,11 +517,19 @@ function resolveSelectedModels(file: ConfigFile): SelectedModels {
  * `features.claude_code_cli_enabled:true` + main backend'i explicit set değilse
  * → main:"cli" (geriye uyum; eski kullanıcının main-CLI tercihi korunur).
  */
-function resolveAgentBackends(file: ConfigFile): AgentBackends {
+export function resolveAgentBackends(file: ConfigFile): AgentBackends {
   const ab = file.agent_backends ?? {};
   const merged: AgentBackends = { ...DEFAULT_BACKENDS, ...ab };
   if (ab.main === undefined && file.features?.claude_code_cli_enabled === true) {
     merged.main = "cli";
+  }
+  // YZLLM ("z.ai'a geçince orkestratör + çevirmen de onu kullansın"): main z.ai ise, "auto" olan destek
+  // rolleri (orchestrator + translator) ana sağlayıcıyı İZLER → onlar da z.ai. Açık per-rol seçim
+  // (api/cli/zai) DOKUNULMAZ — yalnız "auto" izler. Tek noktada çözülür → resolveProvider + backendForRole +
+  // isAutoMode hepsi tutarlı görür. Müfettiş ETKİLENMEZ (inspectorClaudeEnv hep Claude, ayrı yol).
+  if (merged.main === "zai") {
+    if ((ab.orchestrator ?? "auto") === "auto") merged.orchestrator = "zai";
+    if ((ab.translator ?? "auto") === "auto") merged.translator = "zai";
   }
   return merged;
 }
@@ -552,7 +560,9 @@ export function zaiKeyForRole(keys: ApiKeys, role: AgentRole): string | undefine
     role === "translator" ? keys.zai_translator
     : role === "orchestrator" ? keys.zai_orchestrator
     : keys.zai_main;
-  return perRole ?? keys.zai;
+  // z.ai TEK hesap → rolün kendi key'i yoksa HERHANGİ bir z.ai key'ine düş (kullanıcı tek alan
+  // doldurunca 3 rol de çalışır; cascade'le z.ai'ya geçen orchestrator/translator key bulur).
+  return perRole ?? keys.zai ?? keys.zai_main ?? keys.zai_translator ?? keys.zai_orchestrator;
 }
 
 /** Rolün claude key'i (provider claude iken). */

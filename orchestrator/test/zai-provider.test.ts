@@ -4,6 +4,7 @@
 import { describe, expect, it } from "vitest";
 import {
   resolveProvider,
+  resolveAgentBackends,
   zaiKeyForRole,
   ZAI_BASE_URL,
   type MyclConfig,
@@ -78,6 +79,57 @@ describe("zaiKeyForRole (per-rol > default)", () => {
     expect(zaiKeyForRole(keys, "main")).toBe("def");
     expect(zaiKeyForRole(keys, "orchestrator")).toBe("def");
     expect(zaiKeyForRole({} as ApiKeys, "main")).toBeUndefined();
+  });
+
+  // YZLLM: "z.ai'a geçince hepsi kullansın" → kullanıcı tek z.ai key girince 3 rol de çalışmalı.
+  it("yalnız zai_main dolu → orchestrator/translator de o key'i bulur (tek-key fallback)", () => {
+    const keys = { zai_main: "zm" } as ApiKeys;
+    expect(zaiKeyForRole(keys, "main")).toBe("zm");
+    expect(zaiKeyForRole(keys, "orchestrator")).toBe("zm");
+    expect(zaiKeyForRole(keys, "translator")).toBe("zm");
+  });
+
+  it("yalnız zai_translator dolu → main/orchestrator de o key'e düşer", () => {
+    const keys = { zai_translator: "zt" } as ApiKeys;
+    expect(zaiKeyForRole(keys, "main")).toBe("zt");
+    expect(zaiKeyForRole(keys, "orchestrator")).toBe("zt");
+  });
+
+  it("per-rol kendi key'i varsa fallback'i EZER (öncelik korunur)", () => {
+    const keys = { zai_main: "zm", zai_orchestrator: "zo" } as ApiKeys;
+    expect(zaiKeyForRole(keys, "orchestrator")).toBe("zo");
+    expect(zaiKeyForRole(keys, "main")).toBe("zm");
+  });
+});
+
+describe("resolveAgentBackends — z.ai cascade (YZLLM: main z.ai → orch+translator de z.ai)", () => {
+  it("main zai + orch/translator belirtilmemiş (auto) → ikisi de zai", () => {
+    const r = resolveAgentBackends({ agent_backends: { main: "zai" } } as never);
+    expect(r.main).toBe("zai");
+    expect(r.orchestrator).toBe("zai");
+    expect(r.translator).toBe("zai");
+  });
+
+  it("main zai + orch açıkça 'auto' → cascade'le zai", () => {
+    const r = resolveAgentBackends({
+      agent_backends: { main: "zai", orchestrator: "auto", translator: "auto" },
+    } as never);
+    expect(r.orchestrator).toBe("zai");
+    expect(r.translator).toBe("zai");
+  });
+
+  it("main zai + orch açıkça 'api' → orch KORUNUR (açık seçim cascade'i ezmez); translator auto → zai", () => {
+    const r = resolveAgentBackends({
+      agent_backends: { main: "zai", orchestrator: "api" },
+    } as never);
+    expect(r.orchestrator).toBe("api");
+    expect(r.translator).toBe("zai");
+  });
+
+  it("main zai DEĞİL (api) → cascade YOK (orch/translator default auto kalır)", () => {
+    const r = resolveAgentBackends({ agent_backends: { main: "api" } } as never);
+    expect(r.orchestrator).toBe("auto");
+    expect(r.translator).toBe("auto");
   });
 });
 
