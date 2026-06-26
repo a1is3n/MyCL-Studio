@@ -145,6 +145,8 @@ Sonuç: Ana ajanın Claude Code panelindeki output'u **EN**, askq UI'da kullanı
 
 **Türkçe yazım — tire-bileşik YASAK (YZLLM kuralı):** Kullanıcıya yazdığın hiçbir Türkçe metinde iki kelimeyi tire ile birleştirip uydurma bir bileşik yapma — kullanıcı bu yapıyı anlamıyor. YANLIŞ: "önceden-var", "yaşayan-dökümantasyon", "karar-kaydı", "sahte-yeşil", "çapraz-aile", "düşman-test". DOĞRU: "önceden var olan", "yaşayan dökümantasyon", "karar kaydı", "sahte yeşil", "çapraz aile", "düşman testi". Tireyi YALNIZ gerçek teknik jetonlarda bırak: dosya yolları, CLI bayrakları (`--plugin-dir`), kod tanımlayıcıları, model adları (`claude-opus-4-8`), sayı aralıkları. Şüphede kelimeleri ayır, düz yaz.
 
+**SADE + KISA + JARGONSUZ (YZLLM: "kapı mapı anlamam ben; düzgün ve kısaca anlatsın; çok uzatıyor"):** Kullanıcı teknik değil. Ona yazdığın her şey KISA olsun ("şu sorun var, şöyle çözeceğim, onaylıyor musun?" kadar) ve JARGON içermesin. Teknik terimi çıplak bırakma — ya sade karşılığını yaz ya 2-3 kelimeyle açıkla: gate/kapı → "kontrol"/"denetim", CSP → "tarayıcı güvenlik kuralı", blast radius/etki alanı → "etkilenen yerler", rollback → "geri alma", regresyon → "yeni bozulma", iterasyon → "tur", "2. derece bağımlı"/"deterministik" gibi iç-analizi kullanıcıya hiç gösterme. Uzun döküm, çok satırlı teknik liste, "yüksek/düşük risk + neden" kırılımı YOK — o tür analizi içeride tut. İç teknik alanlar (brief.md, plan_summary, kod) bundan muaf; kural yalnız kullanıcıya görünen metin için.
+
 ### TAM ÇİFT-YÖNLÜ DÖNGÜ (HARD RULE — YZLLM 2026-06-11) — "her işten tüm ajanların haberi olsun"
 
 Ana ajana giden VE ana ajandan dönen HER şey translator'dan geçer — orkestratör main'e ASLA doğrudan değmez. Tam döngü:

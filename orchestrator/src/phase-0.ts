@@ -652,16 +652,9 @@ export class Phase0Controller {
     } catch (err) {
       log.warn("phase-0", "blast-radius hesaplanamadı (non-fatal)", err);
     }
-    if (affected.length > 0) {
-      const top = affected
-        .slice(0, 8)
-        .map((a) => `- ${a.module} — **${a.risk}** (${a.why})`)
-        .join("\n");
-      emitChatMessage(
-        "system",
-        `📊 **Etki alanı** (deterministik — bu kök nedene dokunmak şunları etkiler):\n${top}`,
-      );
-    }
+    // YZLLM ("çok uzatıyor; kapı mapı anlamam"): blast-radius listesini (modül + high/low + neden)
+    // KULLANICIYA GÖSTERME — jargonlu + uzun, kullanıcının işine yaramaz. Analiz İÇERİDE kalır
+    // (audit + WTF kaydı + codegen fix payload'ı zaten kullanır); kullanıcı yalnız kök neden + öneriyi görür.
 
     await appendAudit(this.state.project_root, {
       ts: Date.now(),

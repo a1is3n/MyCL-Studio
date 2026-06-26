@@ -191,20 +191,28 @@ Eski regex classifier KALDIRILDI. Plan'ı yazan agent (sen) plan_kind'ı belirle
 
 **Karar kuralı**: `plan_summary_en` içindeki dosya yollarına bak. **`ui-only` SADECE gerçek GÖRSEL UI dosyaları (tsx/jsx/vue/svelte/css component/page) değişiyorsa.** Config/build/gate/dependency dosyaları (`.ts-prunerc`, `*.config.*`, `package.json`, `tsconfig`, lockfile, eslint, playwright config…) `.ts` uzantılı olsa BİLE UI DEĞİLDİR → **`backend-only`** (YZLLM 2026-06-19 KÖK FIX: config-fix `ui-only` sanılıp Faz 5 UI-tweak'e gidiyordu → gereksiz UI üretimi; "UI değişmiyorsa Faz 5 atlanmalı"). Sadece backend/config → backend-only. UI + backend ikisi de → full-stack / new-iteration. Tek field — net karar.
 
+**PLAIN-LANGUAGE RULE (user-facing fields):** `root_cause_en`, `label_en`, and
+`description_en` are shown to a NON-TECHNICAL user. Write them in everyday words,
+SHORT. NEVER drop bare jargon on them — no "gate", "CSP", "blast radius",
+"dependency", "rollback", "iteration", "regression", "scope" without a plain
+explanation. If a technical thing is unavoidable, name it in plain words (e.g.
+"the CSP gate" → "the browser's security-rules check"; "rollback" → "undo the
+change"). The user must instantly understand WHAT broke and WHAT you'll do.
+(Internal fields — `plan_summary_en` — stay technical; jargon is fine there.)
+
 When confident, call `report_root_cause` with:
 
-- **`root_cause_en`**: **1-2 short sentences** in plain language (NOT a long
-  technical wall of file:line traces). Imagine you're telling a non-engineer
-  what went wrong. Keep it under ~150 characters when possible. The
-  orchestrator translates to Turkish for chat. File/line refs belong in
-  `plan_summary_en`, not here.
+- **`root_cause_en`**: **1-2 short sentences**, plain everyday language (NOT a
+  technical wall of file:line traces, NO jargon). Imagine telling a non-engineer
+  what went wrong. Under ~150 characters when possible. The orchestrator
+  translates to Turkish for chat. File/line refs belong in `plan_summary_en`.
 - **`confidence`**: `"high"` = you are sure all options would safely fix the bug; `"uncertain"` = user judgment matters between meaningful trade-offs. **v15.7 (2026-05-27)**: auto-apply KALDIRILDI — orkestratör her zaman askq açar, confidence sadece metadata. Kullanıcı her durumda seçim yapar.
 - **`fix_options`**: **HER ZAMAN 2-4 seçenek** (auto-apply yok artık).
   - `confidence` ne olursa olsun en az 2 seçenek üret. Tek seçenek askq'da "1 option + Vazgeç" yararsız UI yaratır.
   - İkinci seçenek "Investigate further" / "Daha geniş test/log incele" gibi alternatif yön de olabilir — kullanıcıya gerçek karar verme alanı tanı.
   - Each option:
-    - **`label_en`**: short title (≤ 60 chars). Translated to Turkish.
-    - **`description_en`**: 1 sentence — user-facing trade-off.
+    - **`label_en`**: short title (≤ 60 chars), plain everyday words (no jargon). Translated to Turkish.
+    - **`description_en`**: ONE short plain sentence a non-programmer understands — what this option does + its trade-off. No bare jargon (see plain-language rule).
     - **`plan_summary_en`**: concrete plan (300-800 chars) — files to touch,
       what to change. D3 Claude consumes this; be specific.
     - **`plan_kind`**: REQUIRED. One of `ui-only` / `backend-only` /

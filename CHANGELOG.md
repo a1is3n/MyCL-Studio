@@ -1,5 +1,15 @@
 ## 2026-06-26
 
+- **fix(dil): MyCL mesajları kullanıcıya sade + kısa + jargonsuz (YZLLM: "kapı mapı anlamam; çok uzatıyor"):**
+  YZLLM debug akışındaki mesajların jargonlu ("CSP kapısı", "2. derece bağımlı", "deterministik", "ölü yedek")
+  ve uzun olmasından şikayet etti. (1) [phase-0.ts](orchestrator/src/phase-0.ts): uzun "Etki alanı" listesi (8 modül
+  + yüksek/düşük risk + neden) KULLANICIDAN kaldırıldı — analiz içeride (audit + WTF + codegen payload) kalır,
+  kullanıcı yalnız kök neden + öneriyi görür. (2) [phase-00-debug.md](assets/templates/phase-00-debug.md): kök neden +
+  seçenek başlığı + açıklama alanları için PLAIN-LANGUAGE kuralı — teknik olmayan kullanıcıya kısa, jargonsuz; çıplak
+  terim yasak (gate → "kontrol", CSP → "tarayıcı güvenlik kuralı" gibi açıkla); iç alan `plan_summary` muaf. (3)
+  [orchestrator-system.md](assets/agent-prompts/orchestrator-system.md) Dil disiplini: genel sade + kısa + jargonsuz
+  kuralı ("şu sorun var, şöyle çözeceğim" kadar). check yeşil. Açık: diğer akışlar (Faz 9 risk, gate-autofix) sırada.
+
 - **feat(z.ai): z.ai'a geçilince orkestratör ve çevirmen de z.ai kullanır (YZLLM):**
   Önceden main z.ai (glm-5.2) iken çevirmen Claude'da (haiku) kalıp fail veriyordu — pipeline tıkanıyordu.
   [config.ts](orchestrator/src/config.ts) `resolveAgentBackends`: main=zai ise, açıkça ayarlanmamış ("auto")
